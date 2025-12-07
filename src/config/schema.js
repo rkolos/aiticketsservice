@@ -24,4 +24,3 @@ const schema = Joi.object({
 }).unknown(true); // Разрешаем неизвестные поля для системных переменных Docker
 
 module.exports = schema;
-

@@ -5,10 +5,7 @@ const config = require('../config');
 const format =
   config.env === 'production'
     ? winston.format.json()
-    : winston.format.combine(
-        winston.format.colorize(),
-        winston.format.simple()
-      );
+    : winston.format.combine(winston.format.colorize(), winston.format.simple());
 
 // Создаем логгер
 const logger = winston.createLogger({
@@ -18,4 +15,3 @@ const logger = winston.createLogger({
 });
 
 module.exports = logger;
-

@@ -25,4 +25,3 @@ async function slowLaneProcessor(job) {
 }
 
 module.exports = slowLaneProcessor;
-

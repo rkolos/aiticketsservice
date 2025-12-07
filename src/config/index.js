@@ -52,4 +52,3 @@ module.exports = {
     port: parseInt(value.HEALTHCHECK_PORT, 10),
   },
 };
-
