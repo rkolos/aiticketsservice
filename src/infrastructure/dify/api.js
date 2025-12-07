@@ -239,11 +239,14 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
 
     formData.append('data', dataField);
 
+    // Получить заголовки от formData (включая Content-Type с boundary)
+    const headers = {
+      ...formData.getHeaders(),
+      Authorization: `Bearer ${apiKey}`,
+    };
+
     const response = await difyClient.post(`/datasets/${datasetId}/document/create_by_file`, formData, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        ...formData.getHeaders(),
-      },
+      headers,
     });
 
     return response.data;
