@@ -193,6 +193,252 @@ class OrganizationService {
 
     return stats;
   }
+
+  /**
+   * Lazy Loading для базы файлов (Admin KB)
+   * Гарантирует существование базы знаний для организации, создавая её при необходимости
+   * Алгоритм: Cache First -> Dify Search -> Lazy Create
+   * @param {string} orgId - ID организации
+   * @returns {Promise<string>} ID базы знаний (adminKbId)
+   */
+  async ensureAdminKb(orgId) {
+    if (!orgId) {
+      throw new Error('orgId is required');
+    }
+
+    logger.debug('ensureAdminKb: checking cache', { orgId });
+
+    // 1. Check Cache (Cache First)
+    const cachedData = await redisCache.getOrgDatasets(orgId);
+    if (cachedData && cachedData.adminKbId) {
+      logger.debug('ensureAdminKb: found in cache', {
+        orgId,
+        adminKbId: cachedData.adminKbId,
+      });
+      return cachedData.adminKbId;
+    }
+
+    logger.debug('ensureAdminKb: not in cache, checking Dify', { orgId });
+
+    // 2. Check Dify (Failover)
+    const adminKey = config.dify.keys.admin;
+    if (!adminKey) {
+      throw new Error('Dify admin key is not configured');
+    }
+
+    const expectedName = `KB_ADMIN_${orgId}`;
+    let foundDataset = null;
+    let page = 1;
+    const limit = 50;
+    let hasMore = true;
+
+    while (hasMore && !foundDataset) {
+      try {
+        const response = await difyApi.listDatasets(adminKey, page, limit);
+
+        if (response.data && Array.isArray(response.data)) {
+          // Поиск датасета с нужным именем
+          foundDataset = response.data.find(
+            (dataset) => dataset.name === expectedName
+          );
+
+          hasMore =
+            response.data.length === limit &&
+            response.has_more !== false &&
+            !foundDataset;
+        } else {
+          hasMore = false;
+        }
+
+        page++;
+      } catch (error) {
+        logger.error('ensureAdminKb: error fetching datasets from Dify', {
+          orgId,
+          error: error.message,
+        });
+        throw error;
+      }
+    }
+
+    let adminKbId;
+
+    if (foundDataset) {
+      // Датасет найден в Dify
+      adminKbId = foundDataset.id;
+      logger.info('ensureAdminKb: found in Dify', {
+        orgId,
+        adminKbId,
+      });
+    } else {
+      // 3. Create (Lazy Create)
+      logger.info('ensureAdminKb: creating new dataset', { orgId });
+
+      try {
+        const newDataset = await difyApi.createDataset(adminKey, expectedName);
+        adminKbId = newDataset.id;
+
+        logger.info('ensureAdminKb: created new dataset', {
+          orgId,
+          adminKbId,
+        });
+      } catch (error) {
+        logger.error('ensureAdminKb: error creating dataset', {
+          orgId,
+          error: error.message,
+        });
+        throw error;
+      }
+    }
+
+    // 4. Update Cache
+    // Сохраняем adminKbId, не затирая существующий historyKbId
+    const existingHistoryKbId =
+      cachedData && cachedData.historyKbId ? cachedData.historyKbId : null;
+
+    try {
+      await redisCache.setOrgDatasets(orgId, {
+        adminKbId,
+        historyKbId: existingHistoryKbId,
+      });
+
+      logger.debug('ensureAdminKb: cache updated', {
+        orgId,
+        adminKbId,
+        historyKbId: existingHistoryKbId,
+      });
+    } catch (error) {
+      logger.error('ensureAdminKb: error updating cache', {
+        orgId,
+        error: error.message,
+      });
+      // Не выбрасываем ошибку, так как база уже создана/найдена
+    }
+
+    return adminKbId;
+  }
+
+  /**
+   * Lazy Loading для базы истории (History KB)
+   * Гарантирует существование базы знаний для организации, создавая её при необходимости
+   * Алгоритм: Cache First -> Dify Search -> Lazy Create
+   * @param {string} orgId - ID организации
+   * @returns {Promise<string>} ID базы знаний (historyKbId)
+   */
+  async ensureHistoryKb(orgId) {
+    if (!orgId) {
+      throw new Error('orgId is required');
+    }
+
+    logger.debug('ensureHistoryKb: checking cache', { orgId });
+
+    // 1. Check Cache (Cache First)
+    const cachedData = await redisCache.getOrgDatasets(orgId);
+    if (cachedData && cachedData.historyKbId) {
+      logger.debug('ensureHistoryKb: found in cache', {
+        orgId,
+        historyKbId: cachedData.historyKbId,
+      });
+      return cachedData.historyKbId;
+    }
+
+    logger.debug('ensureHistoryKb: not in cache, checking Dify', { orgId });
+
+    // 2. Check Dify (Failover)
+    const adminKey = config.dify.keys.admin;
+    if (!adminKey) {
+      throw new Error('Dify admin key is not configured');
+    }
+
+    const expectedName = `KB_HISTORY_${orgId}`;
+    let foundDataset = null;
+    let page = 1;
+    const limit = 50;
+    let hasMore = true;
+
+    while (hasMore && !foundDataset) {
+      try {
+        const response = await difyApi.listDatasets(adminKey, page, limit);
+
+        if (response.data && Array.isArray(response.data)) {
+          // Поиск датасета с нужным именем
+          foundDataset = response.data.find(
+            (dataset) => dataset.name === expectedName
+          );
+
+          hasMore =
+            response.data.length === limit &&
+            response.has_more !== false &&
+            !foundDataset;
+        } else {
+          hasMore = false;
+        }
+
+        page++;
+      } catch (error) {
+        logger.error('ensureHistoryKb: error fetching datasets from Dify', {
+          orgId,
+          error: error.message,
+        });
+        throw error;
+      }
+    }
+
+    let historyKbId;
+
+    if (foundDataset) {
+      // Датасет найден в Dify
+      historyKbId = foundDataset.id;
+      logger.info('ensureHistoryKb: found in Dify', {
+        orgId,
+        historyKbId,
+      });
+    } else {
+      // 3. Create (Lazy Create)
+      logger.info('ensureHistoryKb: creating new dataset', { orgId });
+
+      try {
+        const newDataset = await difyApi.createDataset(adminKey, expectedName);
+        historyKbId = newDataset.id;
+
+        logger.info('ensureHistoryKb: created new dataset', {
+          orgId,
+          historyKbId,
+        });
+      } catch (error) {
+        logger.error('ensureHistoryKb: error creating dataset', {
+          orgId,
+          error: error.message,
+        });
+        throw error;
+      }
+    }
+
+    // 4. Update Cache
+    // Сохраняем historyKbId, не затирая существующий adminKbId
+    const existingAdminKbId =
+      cachedData && cachedData.adminKbId ? cachedData.adminKbId : null;
+
+    try {
+      await redisCache.setOrgDatasets(orgId, {
+        adminKbId: existingAdminKbId,
+        historyKbId,
+      });
+
+      logger.debug('ensureHistoryKb: cache updated', {
+        orgId,
+        adminKbId: existingAdminKbId,
+        historyKbId,
+      });
+    } catch (error) {
+      logger.error('ensureHistoryKb: error updating cache', {
+        orgId,
+        error: error.message,
+      });
+      // Не выбрасываем ошибку, так как база уже создана/найдена
+    }
+
+    return historyKbId;
+  }
 }
 
 // Экспортируем инстанс сервиса (Singleton)
