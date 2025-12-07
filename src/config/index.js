@@ -13,6 +13,9 @@ if (error) {
 }
 
 // Экспорт конфигурации
+// Структура fileService формируется из переменных окружения:
+// - FILE_SERVICE_CONNECTION_TIMEOUT -> fileService.connectionTimeout
+// - FILE_SERVICE_IDLE_TIMEOUT -> fileService.idleTimeout
 module.exports = {
   env: value.NODE_ENV,
   logLevel: value.LOG_LEVEL,
