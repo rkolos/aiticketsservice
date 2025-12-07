@@ -46,10 +46,9 @@ function normalizeError(error) {
 
   // Обработка сетевых ошибок Axios
   if (error.isAxiosError || (error.request && !error.response)) {
-    const errorCode = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' 
-      ? 'TIMEOUT' 
-      : 'NETWORK_ERROR';
-    
+    const errorCode =
+      error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' ? 'TIMEOUT' : 'NETWORK_ERROR';
+
     return {
       errorCode,
       message: 'Failed to connect to AI provider',
@@ -110,8 +109,7 @@ async function handleDifyResourceError(error, orgId) {
   ];
 
   const isResourceNotFound =
-    resourceNotFoundCodes.includes(error.difyCode) ||
-    error.statusCode === 404;
+    resourceNotFoundCodes.includes(error.difyCode) || error.statusCode === 404;
 
   // Если это ошибка отсутствия ресурса и есть orgId
   if (isResourceNotFound && orgId) {
@@ -122,10 +120,9 @@ async function handleDifyResourceError(error, orgId) {
       try {
         OrganizationService = require('../services/OrganizationService');
       } catch (importError) {
-        logger.warn(
-          'OrganizationService not available for cache invalidation',
-          { error: importError.message }
-        );
+        logger.warn('OrganizationService not available for cache invalidation', {
+          error: importError.message,
+        });
         return normalizeError(error);
       }
 
@@ -137,10 +134,7 @@ async function handleDifyResourceError(error, orgId) {
           errorCode: error.difyCode,
         });
       } else {
-        logger.warn(
-          'OrganizationService.invalidateOrgCache not available',
-          { orgId }
-        );
+        logger.warn('OrganizationService.invalidateOrgCache not available', { orgId });
       }
     } catch (invalidationError) {
       logger.error('Error during cache invalidation', {
@@ -159,4 +153,3 @@ module.exports = {
   createErrorPayload,
   handleDifyResourceError,
 };
-

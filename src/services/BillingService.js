@@ -29,11 +29,7 @@ function extractUsage(difyResponse, defaultModel = 'gpt-4') {
     usage = difyResponse.metadata.usage;
   }
   // 2. Альтернативный путь для Workflow (иногда встречается в outputs)
-  else if (
-    difyResponse.data &&
-    difyResponse.data.outputs &&
-    difyResponse.data.outputs.usage
-  ) {
+  else if (difyResponse.data && difyResponse.data.outputs && difyResponse.data.outputs.usage) {
     usage = difyResponse.data.outputs.usage;
   }
   // 3. Прямой путь (если usage на верхнем уровне)
@@ -70,23 +66,12 @@ function extractUsage(difyResponse, defaultModel = 'gpt-4') {
   // 2. { prompt: 10, completion: 20, total: 30 }
   // 3. { tokens: 30 }
 
-  const promptTokens =
-    usage.prompt_tokens ||
-    usage.prompt ||
-    usage.input_tokens ||
-    0;
+  const promptTokens = usage.prompt_tokens || usage.prompt || usage.input_tokens || 0;
 
-  const completionTokens =
-    usage.completion_tokens ||
-    usage.completion ||
-    usage.output_tokens ||
-    0;
+  const completionTokens = usage.completion_tokens || usage.completion || usage.output_tokens || 0;
 
   const totalTokens =
-    usage.total_tokens ||
-    usage.total ||
-    usage.tokens ||
-    promptTokens + completionTokens;
+    usage.total_tokens || usage.total || usage.tokens || promptTokens + completionTokens;
 
   return {
     prompt_tokens: Number(promptTokens) || 0,
@@ -99,4 +84,3 @@ function extractUsage(difyResponse, defaultModel = 'gpt-4') {
 module.exports = {
   extractUsage,
 };
-

@@ -5,6 +5,7 @@ const redisClient = require('./infrastructure/redis/client');
 const difyApi = require('./infrastructure/dify/api');
 const { initWorkers } = require('./infrastructure/bullmq');
 const { resultQueue } = require('./infrastructure/bullmq/resultQueue');
+const OrganizationService = require('./services/OrganizationService');
 
 // Функция для маскирования секретов в конфиге при логировании
 function maskSecrets(configObj) {
@@ -146,6 +147,20 @@ async function startApp() {
 
     // Тестируем подключение к Dify API
     await testDifyConnection();
+
+    // Cache Warming - синхронизация Redis с состоянием Dify
+    try {
+      logger.info('Cache warming started...');
+      const stats = await OrganizationService.syncCacheWithDify();
+      logger.info('Cache warming completed', stats);
+    } catch (error) {
+      logger.error('Cache warming failed', {
+        error: error.message,
+        stack: error.stack,
+      });
+      // Завершить процесс, так как работать с пустым кэшем бессмысленно
+      process.exit(1);
+    }
 
     // Инициализируем воркеры BullMQ
     workers = initWorkers();
