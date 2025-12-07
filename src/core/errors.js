@@ -18,6 +18,22 @@ class DifyApiError extends Error {
   }
 }
 
+/**
+ * Ошибка отсутствия базы знаний
+ */
+class KbNotFoundError extends Error {
+  constructor(orgId) {
+    super(`Knowledge base not found for organization: ${orgId}`);
+    this.name = 'KbNotFoundError';
+    this.orgId = orgId;
+    this.code = 'KB_NOT_FOUND';
+
+    // Сохраняет правильный стек для ошибки
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
 module.exports = {
   DifyApiError,
+  KbNotFoundError,
 };
