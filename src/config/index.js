@@ -51,4 +51,8 @@ module.exports = {
   healthcheck: {
     port: parseInt(value.HEALTHCHECK_PORT, 10),
   },
+  fileService: {
+    connectionTimeout: parseInt(value.FILE_SERVICE_CONNECTION_TIMEOUT, 10),
+    idleTimeout: parseInt(value.FILE_SERVICE_IDLE_TIMEOUT, 10),
+  },
 };

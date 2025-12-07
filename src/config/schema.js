@@ -21,6 +21,10 @@ const schema = Joi.object({
   // Workers (BullMQ)
   WORKER_FAST_LANE_CONCURRENCY: Joi.number().default(15),
   WORKER_SLOW_LANE_CONCURRENCY: Joi.number().default(2),
+
+  // File Service
+  FILE_SERVICE_CONNECTION_TIMEOUT: Joi.number().default(30000), // 30 секунд
+  FILE_SERVICE_IDLE_TIMEOUT: Joi.number().default(60000), // 60 секунд
 }).unknown(true); // Разрешаем неизвестные поля для системных переменных Docker
 
 module.exports = schema;
