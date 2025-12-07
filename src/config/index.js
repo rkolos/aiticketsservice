@@ -36,6 +36,16 @@ module.exports = {
     },
     slowLane: {
       concurrency: parseInt(value.WORKER_SLOW_LANE_CONCURRENCY, 10),
+      rateLimiter: {
+        fileUpload: {
+          max: 1,
+          duration: 1000, // 1 секунда - максимум 1 файл в секунду
+        },
+      },
+    },
+    retry: {
+      attempts: 3,
+      backoffDelay: 1000, // Начальная задержка в миллисекундах
     },
   },
   healthcheck: {

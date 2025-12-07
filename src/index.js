@@ -3,6 +3,8 @@ const config = require('./config');
 const logger = require('./utils/logger');
 const redisClient = require('./infrastructure/redis/client');
 const difyApi = require('./infrastructure/dify/api');
+const { initWorkers } = require('./infrastructure/bullmq');
+const { resultQueue } = require('./infrastructure/bullmq/resultQueue');
 
 // Функция для маскирования секретов в конфиге при логировании
 function maskSecrets(configObj) {
@@ -87,6 +89,54 @@ async function testDifyConnection() {
   }
 }
 
+// Переменные для graceful shutdown
+let workers = null;
+let server = null;
+
+// Graceful Shutdown
+async function shutdown(signal) {
+  logger.info(`Received ${signal}, shutting down gracefully...`);
+
+  try {
+    // Закрываем воркеры (ждет завершения текущих задач)
+    if (workers) {
+      logger.info('Closing workers...');
+      await Promise.all([
+        workers.fastLaneWorker.close(),
+        workers.slowLaneWorker.close(),
+      ]);
+      logger.info('Workers closed');
+    }
+
+    // Закрываем очередь результатов
+    logger.info('Closing result queue...');
+    await resultQueue.close();
+    logger.info('Result queue closed');
+
+    // Закрываем соединение Redis клиента кэша
+    logger.info('Closing Redis cache client...');
+    redisClient.disconnect();
+    logger.info('Redis cache client closed');
+
+    // Закрываем HTTP сервер
+    if (server) {
+      server.close(() => {
+        logger.info('HTTP server closed');
+        process.exit(0);
+      });
+    } else {
+      process.exit(0);
+    }
+  } catch (error) {
+    logger.error('Error during shutdown', { error: error.message });
+    process.exit(1);
+  }
+}
+
+// Обработчики сигналов для graceful shutdown
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
 // Инициализация приложения
 async function startApp() {
   try {
@@ -97,8 +147,12 @@ async function startApp() {
     // Тестируем подключение к Dify API
     await testDifyConnection();
 
+    // Инициализируем воркеры BullMQ
+    workers = initWorkers();
+    logger.info('BullMQ workers initialized');
+
     // Простой HTTP сервер для healthcheck
-    const server = http.createServer((req, res) => {
+    server = http.createServer((req, res) => {
       if (req.url === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok' }));
