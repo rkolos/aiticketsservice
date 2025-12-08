@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+        env:
+          NODE_ENV: test
+          LOG_LEVEL: error
+          HEALTHCHECK_PORT: 3000
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          REDIS_PASSWORD: ''
+          DIFY_API_URL: http://localhost:5001/v1
+          DIFY_KEY_ADMIN: test-admin-key
+          DIFY_KEY_CLASSIFIER: test-classifier-key
+          DIFY_KEY_SUMMARIZER: test-summarizer-key
+          DIFY_KEY_RESPONSE_WORKFLOW: test-response-key
+          WORKER_FAST_LANE_CONCURRENCY: 15
+          WORKER_SLOW_LANE_CONCURRENCY: 2
+          DIFY_WORKFLOW_MAX_INPUT_VARIABLE_SIZE: 49152
+          DIFY_WORKFLOW_MAX_REQUEST_BODY_SIZE: 10485760
+          MODEL_NAME: gpt-4
+          MODEL_CONTEXT_WINDOW: 8192
+          FILE_SERVICE_CONNECTION_TIMEOUT: 30000
+          FILE_SERVICE_IDLE_TIMEOUT: 60000
+
