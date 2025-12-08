@@ -2,11 +2,12 @@ const logger = require('../utils/logger');
 const OrganizationService = require('../services/OrganizationService');
 const difyApi = require('../infrastructure/dify/api');
 const { sendResult } = require('../infrastructure/bullmq/resultQueue');
-const { createErrorPayload } = require('../utils/errorHandler');
+const { createErrorPayload, handleDifyResourceError } = require('../utils/errorHandler');
 const { KbNotFoundError } = require('../core/errors');
 const config = require('../config');
 const tokenCounter = require('../utils/tokenCounter');
 const historyFormatter = require('../utils/historyFormatter');
+const BillingService = require('../services/BillingService');
 
 /**
  * Сборка контекста из чанков в структурированную строку Markdown
@@ -281,8 +282,7 @@ function pruneHistory(history, modelName, historyLimit, jobId) {
 
 /**
  * Обработчик задачи CMD_GEN_RESPONSE
- * Этап 2-3: Логика поиска и сборки контекста (Retrieval Logic + Context Assembly & Pruning)
- * Получает чанки из баз знаний, собирает контекст и обрезает при необходимости
+ * Полный цикл External RAG: поиск -> сборка контекста -> обрезка -> генерация -> извлечение usage -> возврат результата
  * @param {Job} job - Задача из BullMQ
  * @returns {Promise<void>}
  */
@@ -427,10 +427,120 @@ async function handleGenResponse(job) {
       });
     }
 
-    // Возврат результата в resultQueue
+    // Шаг 5: Generation - вызов Dify Workflow для генерации ответа
+    const workflowKey = config.dify.keys.responseWorkflow;
+    if (!workflowKey) {
+      throw new Error('Dify response workflow key is not configured');
+    }
+
+    logger.info('CMD_GEN_RESPONSE: Starting generation', {
+      jobId: job.id,
+      orgId,
+      contextLength: prunedContextResult.context.length,
+      historyLength: prunedHistoryResult.history.length,
+    });
+
+    // Вызов Workflow с отформатированными переменными
+    const workflowInputs = {
+      query,
+      history: prunedHistoryResult.history,
+      context: prunedContextResult.context,
+    };
+
+    // Получаем ответ от Dify Workflow
+    let workflowOutputs;
+
+    try {
+      workflowOutputs = await difyApi.runWorkflow(workflowKey, workflowInputs, meta.user || 'system');
+    } catch (workflowError) {
+      logger.error('CMD_GEN_RESPONSE: Workflow execution error', {
+        jobId: job.id,
+        orgId,
+        error: workflowError.message,
+        stack: workflowError.stack,
+      });
+
+      // Обработка ошибок с инвалидацией кэша при необходимости
+      await handleDifyResourceError(workflowError, orgId);
+
+      // Отправка ошибки в resultQueue
+      await sendResult('CMD_GEN_RESPONSE', createErrorPayload(workflowError, meta), meta);
+
+      // Выбрасываем ошибку для BullMQ retry стратегии
+      throw workflowError;
+    }
+
+    // Шаг 6: Extract Usage - извлечение usage через BillingService
+    // runWorkflow возвращает outputs, но extractUsage может искать usage в разных местах
+    // Структурируем ответ для extractUsage (он ищет в metadata.usage, data.outputs.usage, или usage)
+    const workflowResponse = {
+      data: {
+        outputs: workflowOutputs,
+      },
+      metadata: workflowOutputs.metadata || {},
+      usage: workflowOutputs.usage || null,
+    };
+
+    const usage = BillingService.extractUsage(workflowResponse, config.model.name);
+
+    logger.info('CMD_GEN_RESPONSE: Usage extracted', {
+      jobId: job.id,
+      orgId,
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens,
+      model: usage.model,
+    });
+
+    // Шаг 7: Extract text and sources - извлечение текста ответа и источников
+    // Структура ответа Dify Workflow может варьироваться
+    // Обычно текст находится в outputs.text или outputs.output
+    const text =
+      workflowOutputs.text ||
+      workflowOutputs.output ||
+      workflowOutputs.answer ||
+      workflowOutputs.response ||
+      '';
+
+    // Источники могут быть в outputs.sources или outputs.references
+    const sources =
+      workflowOutputs.sources ||
+      workflowOutputs.references ||
+      workflowOutputs.documents ||
+      [];
+
+    // Если источники не найдены, используем информацию из чанков
+    const fallbackSources = [
+      ...prunedContextResult.adminChunks.map((chunk) => ({
+        dataset_id: adminKbId,
+        dataset_name: 'Admin KB',
+        document_id: chunk.document_id || null,
+        document_name: chunk.document_name || chunk.source || null,
+        score: chunk.score || null,
+      })),
+      ...prunedContextResult.historyChunks.map((chunk) => ({
+        dataset_id: historyKbId,
+        dataset_name: 'History KB',
+        document_id: chunk.document_id || null,
+        document_name: chunk.document_name || chunk.source || null,
+        score: chunk.score || null,
+      })),
+    ];
+
+    const finalSources = sources.length > 0 ? sources : fallbackSources;
+
+    // Шаг 8: Return Result - отправка финального результата в resultQueue
     const result = {
       success: true,
       data: {
+        text,
+        sources: finalSources,
+        usage: {
+          promptTokens: usage.prompt_tokens,
+          completionTokens: usage.completion_tokens,
+          totalTokens: usage.total_tokens,
+          model: usage.model,
+        },
         context: prunedContextResult.context,
         history: prunedHistoryResult.history,
         query,
@@ -454,13 +564,16 @@ async function handleGenResponse(job) {
 
     await sendResult('CMD_GEN_RESPONSE', result, meta);
 
-    logger.info('CMD_GEN_RESPONSE: Result sent to result queue', {
+    logger.info('CMD_GEN_RESPONSE: Final result sent to result queue', {
       jobId: job.id,
       orgId,
-      adminChunksCount: prunedContextResult.adminChunks.length,
-      historyChunksCount: prunedContextResult.historyChunks.length,
-      contextTokens: prunedContextResult.pruningInfo.prunedTokens,
-      historyTokens: prunedHistoryResult.pruningInfo.prunedTokens,
+      textLength: text.length,
+      sourcesCount: finalSources.length,
+      usage: {
+        promptTokens: usage.prompt_tokens,
+        completionTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens,
+      },
     });
   } catch (error) {
     logger.error('CMD_GEN_RESPONSE: Unexpected error', {
@@ -470,8 +583,22 @@ async function handleGenResponse(job) {
       stack: error.stack,
     });
 
+    // Обработка ошибок с инвалидацией кэша при необходимости
+    try {
+      await handleDifyResourceError(error, orgId);
+    } catch (handleError) {
+      logger.warn('CMD_GEN_RESPONSE: Error handling failed', {
+        jobId: job.id,
+        orgId,
+        error: handleError.message,
+      });
+    }
+
     // Отправка ошибки в resultQueue
     await sendResult('CMD_GEN_RESPONSE', createErrorPayload(error, meta), meta);
+
+    // Выбрасываем ошибку для BullMQ retry стратегии
+    throw error;
   }
 }
 
