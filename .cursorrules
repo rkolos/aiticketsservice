@@ -1,0 +1,142 @@
+# Правила разработки для проекта Ticket AI Worker
+
+## Тестирование
+
+### Обязательные требования при написании тестов:
+
+1. **Закрытие соединений Redis:**
+   - ВСЕГДА добавляйте `afterAll` блок для закрытия Redis соединений в конце файла теста
+   - Используйте следующий паттерн:
+   ```javascript
+   afterAll(async () => {
+     const cleanupPromises = [];
+     
+     // Закрываем resultQueue и его соединение Redis
+     try {
+       const resultQueueModule = require('../../src/infrastructure/bullmq/resultQueue');
+       if (resultQueueModule.resultQueue) {
+         cleanupPromises.push(
+           resultQueueModule.resultQueue.close().catch(() => {})
+         );
+       }
+       if (resultQueueModule.connection) {
+         const conn = resultQueueModule.connection;
+         if (typeof conn.quit === 'function') {
+           cleanupPromises.push(conn.quit().catch(() => {}));
+         } else if (typeof conn.disconnect === 'function') {
+           cleanupPromises.push(new Promise((resolve) => {
+             try { conn.disconnect(); resolve(); } catch { resolve(); }
+           }));
+         }
+       }
+     } catch {}
+     
+     // Закрываем redisClient
+     try {
+       const redisClient = require('../../src/infrastructure/redis/client');
+       if (redisClient && typeof redisClient.disconnect === 'function') {
+         const status = redisClient.status || redisClient.connector?.status;
+         if (status && status !== 'end' && status !== 'close') {
+           cleanupPromises.push(new Promise((resolve) => {
+             try { redisClient.disconnect(); resolve(); } catch { resolve(); }
+           }));
+         }
+       }
+     } catch {}
+     
+     await Promise.all(cleanupPromises);
+     await new Promise((resolve) => {
+       const timer = setTimeout(resolve, 200);
+       timer.unref();
+     });
+   }, 15000);
+   ```
+
+2. **Импорт config:**
+   - ВСЕГДА используйте путь `../../src/config` (не `../../config`)
+   - Для интеграционных тестов загружайте dotenv ПЕРЕД импортом config:
+   ```javascript
+   require('dotenv').config({ override: true });
+   const config = require('../../src/config');
+   ```
+
+3. **Мокирование зависимостей:**
+   - Мокируйте Redis соединения, чтобы они не пытались подключиться:
+   ```javascript
+   jest.mock('../../src/infrastructure/redis/cache', () => ({
+     getOrgDatasets: jest.fn(),
+     setOrgDatasets: jest.fn(),
+     deleteOrgDatasets: jest.fn(),
+     msetOrgDatasets: jest.fn(),
+   }));
+   ```
+
+3.1. **КРИТИЧНО: Порядок моков и импортов для предотвращения зависания тестов:**
+   - **Проблема:** Если моки объявлены ПОСЛЕ импортов модулей, реальные модули выполняются при импорте и создают соединения Redis/BullMQ, которые остаются открытыми и вызывают зависание тестов.
+   - **Решение:** ВСЕГДА объявляйте моки ПЕРЕД импортами модулей, которые используют эти зависимости.
+   - **Правильный порядок в файле теста:**
+   ```javascript
+   // 1. Загрузка .env (если нужен)
+   require('dotenv').config({ override: true });
+   
+   // 2. ВСЕ МОКИ ДОЛЖНЫ БЫТЬ ЗДЕСЬ, ПЕРЕД ИМПОРТАМИ
+   jest.mock('../../src/infrastructure/dify/api');
+   jest.mock('../../src/infrastructure/bullmq/resultQueue', () => {
+     const mockResultQueue = {
+       add: jest.fn(),
+       close: jest.fn().mockResolvedValue(undefined),
+       on: jest.fn(),
+     };
+     const mockConnection = {
+       quit: jest.fn().mockResolvedValue('OK'),
+       disconnect: jest.fn(),
+       on: jest.fn(),
+     };
+     return {
+       resultQueue: mockResultQueue,
+       sendResult: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),
+       connection: mockConnection,
+     };
+   });
+   jest.mock('../../src/infrastructure/redis/cache', () => ({
+     getOrgDatasets: jest.fn(),
+     setOrgDatasets: jest.fn(),
+     deleteOrgDatasets: jest.fn(),
+     msetOrgDatasets: jest.fn(),
+   }));
+   jest.mock('../../src/infrastructure/redis/client', () => {
+     const mockRedisClient = {
+       status: 'ready',
+       disconnect: jest.fn(),
+       ping: jest.fn().mockResolvedValue('PONG'),
+       on: jest.fn(),
+       once: jest.fn(),
+     };
+     return mockRedisClient;
+   });
+   
+   // 3. ТОЛЬКО ПОСЛЕ ВСЕХ МОКОВ - импорты модулей
+   const fastLaneWorker = require('../../src/workers/fastLaneWorker');
+   const OrganizationService = require('../../src/services/OrganizationService');
+   // ... остальные импорты
+   ```
+   - **Важно:** Если модуль создает соединения Redis/BullMQ при импорте (например, `resultQueue.js` создает `new Redis()` и `new Queue()`), мок должен быть объявлен ДО импорта этого модуля или модулей, которые его используют.
+   - **Проверка:** Если тесты зависают с сообщением "Force exiting Jest: Have you considered using `--detectOpenHandles`", проверьте порядок моков и импортов.
+
+4. **Интеграционные тесты:**
+   - Для интеграционных тестов мокируйте только внешние API (Dify API)
+   - Проверяйте реальные вызовы методов внутри воркера
+   - Используйте `jest.spyOn` для проверки вызовов реальных методов
+
+5. **Очистка моков:**
+   - Используйте `beforeEach(() => jest.clearAllMocks())` для очистки моков между тестами
+
+6. **Таймауты:**
+   - Устанавливайте таймаут для `afterAll` (например, 15000ms) для предотвращения зависаний
+
+## Структура кода
+
+- Всегда используйте абсолютные пути при импорте модулей из `src/`
+- Следуйте существующим паттернам в проекте
+- Не изменяйте существующий код без необходимости
+
