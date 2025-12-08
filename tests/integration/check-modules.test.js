@@ -4,14 +4,40 @@
 
 // Закрываем соединения после всех тестов
 afterAll(async () => {
-  // Даем время на завершение асинхронных операций
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  const cleanupPromises = [];
 
   // Закрываем очереди и соединения, если они были открыты
   try {
-    const { resultQueue } = require('../../src/infrastructure/bullmq/resultQueue');
-    if (resultQueue) {
-      await resultQueue.close();
+    const resultQueueModule = require('../../src/infrastructure/bullmq/resultQueue');
+    if (resultQueueModule.resultQueue) {
+      cleanupPromises.push(
+        resultQueueModule.resultQueue.close().catch((error) => {
+          // Игнорируем ошибки закрытия
+        })
+      );
+    }
+    
+    // Закрываем соединение Redis напрямую
+    if (resultQueueModule.connection) {
+      const conn = resultQueueModule.connection;
+      if (typeof conn.quit === 'function') {
+        cleanupPromises.push(
+          conn.quit().catch((error) => {
+            // Игнорируем ошибки закрытия
+          })
+        );
+      } else if (typeof conn.disconnect === 'function') {
+        cleanupPromises.push(
+          new Promise((resolve) => {
+            try {
+              conn.disconnect();
+              resolve();
+            } catch (error) {
+              resolve();
+            }
+          })
+        );
+      }
     }
   } catch (error) {
     // Игнорируем ошибки закрытия
@@ -19,12 +45,27 @@ afterAll(async () => {
 
   try {
     const redisClient = require('../../src/infrastructure/redis/client');
-    if (redisClient && redisClient.status !== 'end') {
-      redisClient.disconnect();
+    if (redisClient && typeof redisClient.disconnect === 'function') {
+      const status = redisClient.status || redisClient.connector?.status;
+      if (status && status !== 'end' && status !== 'close') {
+        cleanupPromises.push(
+          new Promise((resolve) => {
+            try {
+              redisClient.disconnect();
+              resolve();
+            } catch (error) {
+              resolve();
+            }
+          })
+        );
+      }
     }
   } catch (error) {
     // Игнорируем ошибки закрытия
   }
+
+  // Ждем завершения всех операций cleanup
+  await Promise.all(cleanupPromises);
 }, 10000);
 
 describe('Интеграционные тесты модулей', () => {

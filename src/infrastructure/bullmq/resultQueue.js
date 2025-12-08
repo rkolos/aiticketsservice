@@ -13,6 +13,18 @@ const connection = new Redis({
   maxRetriesPerRequest: null, // Обязательное требование BullMQ
 });
 
+// Обработка ошибок соединения Redis
+connection.on('error', (error) => {
+  logger.error('Redis connection error in result queue', {
+    error: error.message,
+    stack: error.stack,
+  });
+});
+
+connection.on('close', () => {
+  logger.warn('Redis connection closed in result queue');
+});
+
 // Создаем очередь результатов
 const resultQueue = new Queue(QUEUES.RESULTS, {
   connection,
@@ -63,5 +75,7 @@ async function sendResult(jobName, data, meta = {}) {
 module.exports = {
   resultQueue,
   sendResult,
+  // Экспортируем соединение для возможности закрытия в тестах
+  connection,
 };
 

@@ -24,6 +24,19 @@ function createWorker(queueName, processor, options = {}) {
     maxRetriesPerRequest: null, // Обязательное требование BullMQ
   });
 
+  // Обработка ошибок соединения Redis
+  connection.on('error', (error) => {
+    logger.error('Redis connection error in worker', {
+      queue: queueName,
+      error: error.message,
+      stack: error.stack,
+    });
+  });
+
+  connection.on('close', () => {
+    logger.warn('Redis connection closed in worker', { queue: queueName });
+  });
+
   // Дефолтные настройки
   const defaultOptions = {
     connection,

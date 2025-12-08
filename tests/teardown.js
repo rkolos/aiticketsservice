@@ -1,19 +1,40 @@
 // Глобальный cleanup для закрытия всех соединений после всех тестов
 afterAll(async () => {
-  // Даем время на завершение асинхронных операций
-  await new Promise((resolve) => setTimeout(resolve, 100));
-
   const cleanupPromises = [];
 
   // Закрываем очереди и соединения, если они были открыты
   try {
-    const { resultQueue } = require('../src/infrastructure/bullmq/resultQueue');
-    if (resultQueue) {
+    const resultQueueModule = require('../src/infrastructure/bullmq/resultQueue');
+    if (resultQueueModule.resultQueue) {
+      // Закрываем очередь (это закроет внутренние соединения BullMQ)
       cleanupPromises.push(
-        resultQueue.close().catch((error) => {
+        resultQueueModule.resultQueue.close().catch((error) => {
           // Игнорируем ошибки закрытия
         })
       );
+    }
+    
+    // Закрываем соединение Redis напрямую
+    if (resultQueueModule.connection) {
+      const conn = resultQueueModule.connection;
+      if (typeof conn.quit === 'function') {
+        cleanupPromises.push(
+          conn.quit().catch((error) => {
+            // Игнорируем ошибки закрытия
+          })
+        );
+      } else if (typeof conn.disconnect === 'function') {
+        cleanupPromises.push(
+          new Promise((resolve) => {
+            try {
+              conn.disconnect();
+              resolve();
+            } catch (error) {
+              resolve();
+            }
+          })
+        );
+      }
     }
   } catch (error) {
     // Игнорируем ошибки импорта (модуль может быть не загружен или замокан)
@@ -44,7 +65,10 @@ afterAll(async () => {
   // Ждем завершения всех операций cleanup
   await Promise.all(cleanupPromises);
 
-  // Даем дополнительное время на закрытие соединений
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  // Даем дополнительное время на закрытие соединений (используем unref чтобы не блокировать завершение)
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 200);
+    timer.unref(); // Не блокировать завершение процесса
+  });
 }, 15000);
 
