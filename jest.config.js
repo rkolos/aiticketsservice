@@ -6,6 +6,6 @@ module.exports = {
     '!src/index.js',
     '!src/config/index.js',
   ],
-  setupFilesAfterEnv: ['<rootDir>/tests/setup.js'],
+  setupFilesAfterEnv: ['<rootDir>/tests/setup.js', '<rootDir>/tests/teardown.js'],
 };
 
