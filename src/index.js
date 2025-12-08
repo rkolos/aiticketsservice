@@ -1,4 +1,3 @@
-const http = require('http');
 const config = require('./config');
 const logger = require('./utils/logger');
 const redisClient = require('./infrastructure/redis/client');
@@ -6,6 +5,7 @@ const difyApi = require('./infrastructure/dify/api');
 const { initWorkers } = require('./infrastructure/bullmq');
 const { resultQueue } = require('./infrastructure/bullmq/resultQueue');
 const OrganizationService = require('./services/OrganizationService');
+const { startHealthcheckServer } = require('./infrastructure/healthcheck/server');
 
 // Функция для маскирования секретов в конфиге при логировании
 function maskSecrets(configObj) {
@@ -166,21 +166,11 @@ async function startApp() {
     workers = initWorkers();
     logger.info('BullMQ workers initialized');
 
-    // Простой HTTP сервер для healthcheck
-    server = http.createServer((req, res) => {
-      if (req.url === '/health' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok' }));
-      } else {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('Not Found');
-      }
-    });
+    // Запускаем healthcheck сервер
+    server = await startHealthcheckServer(workers);
 
-    server.listen(config.healthcheck.port, () => {
-      logger.info('Ticket AI Worker started', {
-        config: maskSecrets(config),
-      });
+    logger.info('Ticket AI Worker started', {
+      config: maskSecrets(config),
     });
   } catch (error) {
     logger.error('Failed to start application', { error: error.message });
