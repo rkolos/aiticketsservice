@@ -2,7 +2,7 @@ const createWorker = require('./factory');
 const { QUEUES } = require('../../core/constants');
 const config = require('../../config');
 const logger = require('../../utils/logger');
-const fastLaneProcessor = require('../../workers/fastLaneProcessor');
+const fastLaneWorker = require('../../workers/fastLaneWorker');
 const slowLaneProcessor = require('../../workers/slowLaneProcessor');
 
 /**
@@ -18,9 +18,9 @@ function initWorkers() {
   logger.info('Initializing BullMQ workers...');
 
   // Воркер 1: Fast Lane (Интерактивная очередь)
-  const fastLaneWorker = createWorker(
+  const fastLaneWorkerInstance = createWorker(
     QUEUES.INTERACTIVE,
-    fastLaneProcessor,
+    fastLaneWorker,
     {
       concurrency: config.workers.fastLane.concurrency, // Из .env: WORKER_FAST_LANE_CONCURRENCY
       // Рекомендуется консервативное значение (10-20) для self-hosted Dify
@@ -57,7 +57,7 @@ function initWorkers() {
   });
 
   return {
-    fastLaneWorker,
+    fastLaneWorker: fastLaneWorkerInstance,
     slowLaneWorker,
   };
 }
