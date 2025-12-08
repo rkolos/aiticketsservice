@@ -20,9 +20,10 @@ docker-compose up -d
 
 Это запустит:
 - **Redis** на порту `6379`
-- **PostgreSQL** для Dify (внутренний порт)
+- **PostgreSQL** для Dify (внутренний порт) - база данных `dify_plugin` создается автоматически
 - **Dify API** на порту `5001`
 - **Dify Web** на порту `3000` (веб-интерфейс)
+- **Dify Plugin Daemon** (сервис для управления плагинами)
 - **Worker** (ваш микросервис)
 
 2. **Настройте переменные окружения:**
@@ -33,7 +34,21 @@ docker-compose up -d
 cp .env.example .env
 ```
 
-Убедитесь, что `DIFY_API_URL=http://localhost:5001` (или `http://dify-api:5001` для Docker сети).
+Убедитесь, что `DIFY_API_URL=http://localhost:5001/v1` (или `http://dify-api:5001/v1` для Docker сети).
+
+**Ключи для локального запуска Dify/worker (Joi-валидация обязательных полей):**
+- `DIFY_KEY_ADMIN=app-UjUAGkbyJ0xwYGz13ztP7brp` (управление базами знаний)
+- `DIFY_KEY_CLASSIFIER=app-eZTtiihrlV2D0QqfnhtjxZEO` (классификация тикетов)
+- `DIFY_KEY_SUMMARIZER=<укажите ваш app key Summarizer>`
+- `DIFY_KEY_RESPONSE_WORKFLOW=<укажите ваш app key Response Workflow>`
+
+> **Важно:** Для успешного `docker-compose up` и старта worker все четыре ключа должны быть непустыми. Заполните Summarizer и Response Workflow своими ключами.
+
+**Локальные API ключи Dify:**
+- `DIFY_KEY_ADMIN=app-UjUAGkbyJ0xwYGz13ztP7brp` (для управления базами знаний)
+- `DIFY_KEY_CLASSIFIER=app-eZTtiihrlV2D0QqfnhtjxZEO` (для классификации тикетов)
+
+> **Примечание:** Это локальный проект, поэтому ключи указаны открыто в документации. Для продакшена используйте защищенные переменные окружения.
 
 3. **Инициализируйте Dify:**
 
