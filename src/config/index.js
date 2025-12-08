@@ -32,6 +32,10 @@ module.exports = {
       summarizer: value.DIFY_KEY_SUMMARIZER,
       responseWorkflow: value.DIFY_KEY_RESPONSE_WORKFLOW,
     },
+    workflow: {
+      maxInputVariableSize: parseInt(value.DIFY_WORKFLOW_MAX_INPUT_VARIABLE_SIZE, 10), // В байтах
+      maxRequestBodySize: parseInt(value.DIFY_WORKFLOW_MAX_REQUEST_BODY_SIZE, 10), // В байтах
+    },
   },
   workers: {
     fastLane: {
@@ -57,5 +61,9 @@ module.exports = {
   fileService: {
     connectionTimeout: parseInt(value.FILE_SERVICE_CONNECTION_TIMEOUT, 10),
     idleTimeout: parseInt(value.FILE_SERVICE_IDLE_TIMEOUT, 10),
+  },
+  model: {
+    name: value.MODEL_NAME,
+    contextWindow: parseInt(value.MODEL_CONTEXT_WINDOW, 10), // В токенах
   },
 };

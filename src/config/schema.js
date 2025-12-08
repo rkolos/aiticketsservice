@@ -26,6 +26,14 @@ const schema = Joi.object({
   // Эти переменные преобразуются в секцию config.fileService.*
   FILE_SERVICE_CONNECTION_TIMEOUT: Joi.number().default(30000), // 30 секунд
   FILE_SERVICE_IDLE_TIMEOUT: Joi.number().default(60000), // 60 секунд
+
+  // Dify Workflow Limits
+  DIFY_WORKFLOW_MAX_INPUT_VARIABLE_SIZE: Joi.number().default(49152), // 48KB в байтах (по умолчанию)
+  DIFY_WORKFLOW_MAX_REQUEST_BODY_SIZE: Joi.number().default(10485760), // 10MB в байтах
+
+  // Model Configuration
+  MODEL_NAME: Joi.string().default('gpt-4'),
+  MODEL_CONTEXT_WINDOW: Joi.number().default(8192), // Токенов (по умолчанию для gpt-3.5-turbo)
 }).unknown(true); // Разрешаем неизвестные поля для системных переменных Docker
 
 module.exports = schema;
