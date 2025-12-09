@@ -78,11 +78,13 @@ function createWorker(queueName, processor, options = {}) {
   });
 
   worker.on('failed', (job, err) => {
-    logger.error(`Job ${job?.id || 'unknown'} failed`, {
+    // Тут можно добавить алерт в Sentry/Telegram в будущем
+    logger.error(`Job ${job?.id || 'unknown'} permanently failed`, {
       queue: queueName,
       jobName: job?.name || 'unknown',
       reason: err.message,
       stack: err.stack,
+      jobData: job?.data,
     });
   });
 

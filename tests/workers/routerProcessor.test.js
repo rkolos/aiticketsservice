@@ -72,9 +72,20 @@ jest.mock('../../src/utils/logger', () => ({
   debug: jest.fn(),
 }));
 
+jest.mock('../../src/utils/errorHandler', () => ({
+  createErrorPayload: jest.fn((error, meta) => ({
+    status: 'error',
+    errorCode: 'INTERNAL_ERROR',
+    message: error.message,
+    meta,
+  })),
+}));
+
 const { Queue } = require('bullmq');
 const routerProcessor = require('../../src/workers/routerProcessor');
 const { QUEUES } = require('../../src/core/constants');
+const { sendResult } = require('../../src/infrastructure/bullmq/resultQueue');
+const ErrorHandler = require('../../src/utils/errorHandler');
 
 describe('Router Processor', () => {
   let mockJob;
@@ -230,6 +241,39 @@ describe('Router Processor', () => {
 
       expect(logger.error).toHaveBeenCalled();
     });
+
+    test('должен отправить ошибку в result queue при неудачной маршрутизации', async () => {
+      jest.clearAllMocks();
+      const error = new Error('Queue error');
+      routerProcessor.fastQueue.add.mockRejectedValueOnce(error);
+
+      mockJob.data = {
+        orgId: 'test-org-123',
+        meta: {
+          traceId: 'trace-123',
+        },
+      };
+
+      try {
+        await routerProcessor(mockJob);
+      } catch (e) {
+        // Ожидаем ошибку
+      }
+
+      // Проверяем, что ошибка была отправлена в result queue
+      expect(sendResult).toHaveBeenCalledTimes(1);
+      expect(sendResult).toHaveBeenCalledWith(
+        'CMD_GEN_RESPONSE',
+        expect.objectContaining({
+          status: 'error',
+        }),
+        expect.objectContaining({
+          jobId: 'test-job-123',
+          traceId: 'trace-123',
+        })
+      );
+      expect(ErrorHandler.createErrorPayload).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('Логирование', () => {
@@ -263,6 +307,99 @@ describe('Router Processor', () => {
           routedJobId: expect.any(String),
         })
       );
+    });
+  });
+
+  describe('Обработка неизвестных типов задач', () => {
+    test('должен отправить ошибку в result queue для неизвестного типа задачи', async () => {
+      const logger = require('../../src/utils/logger');
+      jest.clearAllMocks();
+
+      mockJob.name = 'CMD_UNKNOWN_COMMAND';
+      mockJob.data = {
+        orgId: 'test-org-123',
+        meta: {
+          traceId: 'trace-123',
+        },
+      };
+
+      const result = await routerProcessor(mockJob);
+
+      // Проверяем, что ошибка была отправлена в result queue
+      expect(sendResult).toHaveBeenCalledTimes(1);
+      expect(sendResult).toHaveBeenCalledWith(
+        'CMD_UNKNOWN_COMMAND',
+        expect.objectContaining({
+          status: 'error',
+          errorCode: 'INTERNAL_ERROR',
+          message: expect.stringContaining('Unknown job type'),
+        }),
+        expect.objectContaining({
+          jobId: 'test-job-123',
+          traceId: 'trace-123',
+        })
+      );
+
+      // Проверяем, что createErrorPayload был вызван
+      expect(ErrorHandler.createErrorPayload).toHaveBeenCalledTimes(1);
+
+      // Проверяем, что задача не была добавлена ни в одну очередь
+      expect(routerProcessor.fastQueue.add).not.toHaveBeenCalled();
+      expect(routerProcessor.slowQueue.add).not.toHaveBeenCalled();
+
+      // Проверяем возвращаемое значение
+      expect(result.status).toBe('rejected');
+      expect(result.reason).toBe('unknown_job_type');
+      expect(result.jobName).toBe('CMD_UNKNOWN_COMMAND');
+
+      // Проверяем логирование
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Router: unknown job type',
+        expect.objectContaining({
+          jobId: 'test-job-123',
+          jobName: 'CMD_UNKNOWN_COMMAND',
+        })
+      );
+      expect(logger.info).toHaveBeenCalledWith(
+        'Router: error sent to result queue for unknown job type',
+        expect.objectContaining({
+          jobId: 'test-job-123',
+          jobName: 'CMD_UNKNOWN_COMMAND',
+        })
+      );
+    });
+
+    test('должен обработать задачу без meta', async () => {
+      jest.clearAllMocks();
+
+      mockJob.name = 'CMD_UNKNOWN_COMMAND';
+      mockJob.data = {
+        orgId: 'test-org-123',
+      };
+
+      const result = await routerProcessor(mockJob);
+
+      expect(sendResult).toHaveBeenCalledWith(
+        'CMD_UNKNOWN_COMMAND',
+        expect.any(Object),
+        expect.objectContaining({
+          jobId: 'test-job-123',
+        })
+      );
+
+      expect(result.status).toBe('rejected');
+    });
+
+    test('должен обработать задачу с пустым data', async () => {
+      jest.clearAllMocks();
+
+      mockJob.name = 'CMD_UNKNOWN_COMMAND';
+      mockJob.data = {};
+
+      const result = await routerProcessor(mockJob);
+
+      expect(sendResult).toHaveBeenCalled();
+      expect(result.status).toBe('rejected');
     });
   });
 });

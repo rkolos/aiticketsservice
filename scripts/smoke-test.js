@@ -236,13 +236,13 @@ async function runTest(testName, jobName, data, validator, timeout = 10000, entr
     console.log(colorize('   ✅ META OK', 'green'));
   }
 
-    // Проверяем статус
+    // Проверяем статус (но не возвращаем false сразу - валидатор может ожидать ошибку)
     if (result.data?.status === 'error') {
-      console.log(colorize(`   ❌ WORKER ERROR: ${result.data.error || result.data.message}`, 'red'));
-      return false;
+      console.log(colorize(`   ⚠️  WORKER ERROR: ${result.data.error || result.data.message}`, 'yellow'));
+      // Продолжаем выполнение - валидатор решит, является ли это ожидаемой ошибкой
     }
 
-    // Вызываем валидатор
+    // Вызываем валидатор (может вернуть true даже для ошибок, если ошибка ожидаема)
     const isValid = validator(result.data);
 
     if (isValid) {
@@ -394,7 +394,54 @@ const validators = {
     }
     return hasOrgId && hasDeleted;
   },
+
+  /**
+   * Универсальный валидатор для неизвестных команд
+   * Работает для любой неизвестной команды (CMD_UNKNOWN_COMMAND, CMD_РРРРРРР и т.д.)
+   * Проверяет, что Router Worker корректно обработал неизвестную команду и отправил ошибку
+   */
+  CMD_UNKNOWN_COMMAND: (data) => {
+    // Для неизвестной команды ожидаем ошибку
+    if (data.status !== 'error') {
+      console.log(`   > Expected status 'error', got '${data.status}'`);
+      return false;
+    }
+    const hasErrorCode = data.errorCode && typeof data.errorCode === 'string';
+    const hasMessage = data.message && typeof data.message === 'string';
+    const isUnknownCommandError = data.errorCode === 'UNKNOWN_COMMAND';
+    const messageContainsUnknown = data.message && data.message.toLowerCase().includes('unknown');
+
+    if (hasErrorCode) console.log(`   > Error Code: ${data.errorCode}`);
+    if (hasMessage) {
+      console.log(`   > Error Message: ${data.message}`);
+      if (messageContainsUnknown) {
+        console.log(colorize('   > Contains "unknown" in message ✓', 'green'));
+      }
+    }
+
+    // Проверяем новый errorCode UNKNOWN_COMMAND
+    if (isUnknownCommandError) {
+      console.log(colorize('   > Error code is UNKNOWN_COMMAND ✓', 'green'));
+    }
+
+    return hasErrorCode && hasMessage && (isUnknownCommandError || messageContainsUnknown);
+  },
 };
+
+/**
+ * Универсальная функция для создания валидатора неизвестной команды
+ * Можно использовать для любой неизвестной команды (CMD_UNKNOWN_COMMAND, CMD_РРРРРРР и т.д.)
+ * Валидатор проверяет структуру данных (статус ошибки, наличие errorCode и message),
+ * а не имя команды, поэтому работает для любой неизвестной команды
+ * @returns {Function} Валидатор функции
+ */
+function createUnknownCommandValidator() {
+  return (data) => {
+    // Используем тот же валидатор, что и для CMD_UNKNOWN_COMMAND
+    // Он проверяет структуру данных, а не имя команды
+    return validators.CMD_UNKNOWN_COMMAND(data);
+  };
+}
 
 /**
  * Функция задержки между тестами
@@ -529,7 +576,7 @@ async function main() {
   try {
     // TEST 1: CMD_ANALYZE_NEW_TICKET
     const test1 = await runTest(
-      'TEST 1/10: Analyzing Ticket',
+      'TEST 1/12: Analyzing Ticket',
       'CMD_ANALYZE_NEW_TICKET',
       {
         text: 'У меня не работает вход в систему, ошибка 500',
@@ -545,7 +592,7 @@ async function main() {
 
     // TEST 2: CMD_TRANSLATE
     const test2 = await runTest(
-      'TEST 2/10: Translation',
+      'TEST 2/12: Translation',
       'CMD_TRANSLATE',
       {
         text: 'Привет мир',
@@ -562,7 +609,7 @@ async function main() {
     // TEST 3: CMD_KB_ADD_FILE (первый файл - LangChain README)
     // Загружаем файлы ПЕРЕД генерацией ответа, чтобы использовать их как базу знаний
     const test3 = await runTest(
-      'TEST 3/10: File Upload (LangChain README)',
+      'TEST 3/12: File Upload (LangChain README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
@@ -586,7 +633,7 @@ async function main() {
 
     // TEST 4: CMD_KB_ADD_FILE (второй файл - TypeScript README)
     const test4 = await runTest(
-      'TEST 4/10: File Upload (TypeScript README)',
+      'TEST 4/12: File Upload (TypeScript README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
@@ -622,7 +669,7 @@ async function main() {
     // TEST 5: CMD_GEN_RESPONSE - вопрос по содержимому загруженных файлов
     // Теперь файлы загружены и проиндексированы, можно использовать их как базу знаний
     const test5 = await runTest(
-      'TEST 5/10: Generating Response (RAG with uploaded files)',
+      'TEST 5/12: Generating Response (RAG with uploaded files)',
       'CMD_GEN_RESPONSE',
       {
         orgId: 'test-org-smoke',
@@ -644,7 +691,7 @@ async function main() {
 
     // TEST 6: CMD_ARCHIVE_TICKET
     const test6 = await runTest(
-      'TEST 6/10: Archiving Ticket',
+      'TEST 6/12: Archiving Ticket',
       'CMD_ARCHIVE_TICKET',
       {
         orgId: 'test-org-smoke',
@@ -667,7 +714,7 @@ async function main() {
 
     // TEST 7: CMD_KB_LIST_FILES
     const test7 = await runTest(
-      'TEST 7/10: List Files',
+      'TEST 7/12: List Files',
       'CMD_KB_LIST_FILES',
       {
         orgId: 'test-org-smoke',
@@ -687,7 +734,7 @@ async function main() {
       testResults.push({ name: 'CMD_KB_DELETE_FILE', passed: false });
     } else {
       const test8 = await runTest(
-        'TEST 8/10: Delete File',
+        'TEST 8/12: Delete File',
         'CMD_KB_DELETE_FILE',
         {
           orgId: 'test-org-smoke',
@@ -704,7 +751,7 @@ async function main() {
 
     // TEST 9: CMD_SYS_RESYNC_CACHE
     const test9 = await runTest(
-      'TEST 9/10: Sync Cache',
+      'TEST 9/12: Sync Cache',
       'CMD_SYS_RESYNC_CACHE',
       {
         meta: {},
@@ -716,10 +763,44 @@ async function main() {
     testResults.push({ name: 'CMD_SYS_RESYNC_CACHE', passed: test9 });
     await sleep(2000);
 
-    // TEST 10: CMD_CLEANUP_ORG
-    // ВНИМАНИЕ: Этот тест удаляет данные организации, поэтому он последний
+    // TEST 10: CMD_UNKNOWN_COMMAND (неизвестная команда)
+    // Тест проверяет, что Safe Processor Wrapper корректно обрабатывает неизвестные типы задач
     const test10 = await runTest(
-      'TEST 10/10: Cleanup Org',
+      'TEST 10/12: Unknown Command (Error Handling)',
+      'CMD_UNKNOWN_COMMAND',
+      {
+        orgId: 'test-org-smoke',
+        someData: 'test data',
+        meta: {},
+      },
+      validators.CMD_UNKNOWN_COMMAND,
+      10000,
+      entryQueue
+    );
+    testResults.push({ name: 'CMD_UNKNOWN_COMMAND', passed: test10 });
+    await sleep(2000);
+
+    // TEST 10.5: CMD_РРРРРРР (неизвестная команда с кириллицей)
+    // Демонстрирует, что валидатор работает для любой неизвестной команды
+    const test10_5 = await runTest(
+      'TEST 10.5/12: Unknown Command with Cyrillic (CMD_РРРРРРР)',
+      'CMD_РРРРРРР',
+      {
+        orgId: 'test-org-smoke',
+        someData: 'test data',
+        meta: {},
+      },
+      createUnknownCommandValidator(),
+      10000,
+      entryQueue
+    );
+    testResults.push({ name: 'CMD_РРРРРРР', passed: test10_5 });
+    await sleep(2000);
+
+    // TEST 11: CMD_CLEANUP_ORG
+    // ВНИМАНИЕ: Этот тест удаляет данные организации, поэтому он последний
+    const test11 = await runTest(
+      'TEST 11/12: Cleanup Org',
       'CMD_CLEANUP_ORG',
       {
         orgId: 'test-org-smoke',
@@ -729,7 +810,7 @@ async function main() {
       15000, // Увеличенный таймаут для удаления датасетов
       entryQueue
     );
-    testResults.push({ name: 'CMD_CLEANUP_ORG', passed: test10 });
+    testResults.push({ name: 'CMD_CLEANUP_ORG', passed: test11 });
   } catch (error) {
     console.error(colorize(`\n❌ Fatal error: ${error.message}`, 'red'));
     console.error(error.stack);

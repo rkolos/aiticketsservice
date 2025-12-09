@@ -44,6 +44,38 @@ function normalizeError(error) {
     };
   }
 
+  // Обработка ошибок неизвестных команд
+  if (error.message && error.message.includes('Unknown command:')) {
+    return {
+      errorCode: 'UNKNOWN_COMMAND',
+      message: error.message,
+      originalError: error,
+    };
+  }
+
+  // Обработка ошибок маршрутизации
+  if (error.message && (
+    error.message.includes('routing') ||
+    error.message.includes('queue') ||
+    error.name === 'RoutingError'
+  )) {
+    return {
+      errorCode: 'ROUTING_ERROR',
+      message: 'Failed to route job to target queue',
+      originalError: error,
+    };
+  }
+
+  // Обработка ошибок валидации
+  if (error.name === 'ValidationError' ||
+      (error.message && error.message.includes('validation'))) {
+    return {
+      errorCode: 'VALIDATION_ERROR',
+      message: 'Invalid input data',
+      originalError: error,
+    };
+  }
+
   // Обработка сетевых ошибок Axios
   if (error.isAxiosError || (error.request && !error.response)) {
     const errorCode =

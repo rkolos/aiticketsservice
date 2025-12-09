@@ -1,6 +1,7 @@
 const logger = require('../utils/logger');
 const OrganizationService = require('../services/OrganizationService');
 const difyApi = require('../infrastructure/dify/api');
+const createSafeProcessor = require('../utils/safeProcessor');
 const { sendResult } = require('../infrastructure/bullmq/resultQueue');
 const { createErrorPayload, handleDifyResourceError } = require('../utils/errorHandler');
 const { KbNotFoundError } = require('../core/errors');
@@ -292,36 +293,21 @@ async function handleGenResponse(job) {
     orgId,
     query: query?.substring(0, 50),
   });
-
-  try {
     // Шаг 1: Identify Datasets - получение ID баз знаний
     // Используем ensureAdminKb и ensureHistoryKb вместо getKbIdsOrThrow,
     // чтобы гарантировать наличие баз знаний (lazy loading)
     let adminKbId, historyKbId;
-    try {
-      // Используем ensureAdminKb для гарантии наличия admin базы
-      adminKbId = await OrganizationService.ensureAdminKb(orgId);
-      // Используем ensureHistoryKb для гарантии наличия history базы
-      historyKbId = await OrganizationService.ensureHistoryKb(orgId);
+    // Используем ensureAdminKb для гарантии наличия admin базы
+    adminKbId = await OrganizationService.ensureAdminKb(orgId);
+    // Используем ensureHistoryKb для гарантии наличия history базы
+    historyKbId = await OrganizationService.ensureHistoryKb(orgId);
 
-      logger.info('CMD_GEN_RESPONSE: Knowledge base IDs retrieved', {
-        jobId: job.id,
-        orgId,
-        adminKbId,
-        historyKbId,
-      });
-    } catch (error) {
-      logger.error('CMD_GEN_RESPONSE: Failed to ensure knowledge bases', {
-        jobId: job.id,
-        orgId,
-        error: error.message,
-        stack: error.stack,
-      });
-
-      // Отправка ошибки в resultQueue
-      await sendResult('CMD_GEN_RESPONSE', createErrorPayload(error, meta), meta);
-      throw error;
-    }
+    logger.info('CMD_GEN_RESPONSE: Knowledge base IDs retrieved', {
+      jobId: job.id,
+      orgId,
+      adminKbId,
+      historyKbId,
+    });
 
     // Шаг 2: Retrieval - параллельный поиск чанков из обеих баз
     const adminKey = config.dify.keys.admin;
@@ -584,31 +570,6 @@ async function handleGenResponse(job) {
         totalTokens: usage.total_tokens,
       },
     });
-  } catch (error) {
-    logger.error('CMD_GEN_RESPONSE: Unexpected error', {
-      jobId: job.id,
-      orgId,
-      error: error.message,
-      stack: error.stack,
-    });
-
-    // Обработка ошибок с инвалидацией кэша при необходимости
-    try {
-      await handleDifyResourceError(error, orgId);
-    } catch (handleError) {
-      logger.warn('CMD_GEN_RESPONSE: Error handling failed', {
-        jobId: job.id,
-        orgId,
-        error: handleError.message,
-      });
-    }
-
-    // Отправка ошибки в resultQueue
-    await sendResult('CMD_GEN_RESPONSE', createErrorPayload(error, meta), meta);
-
-    // Выбрасываем ошибку для BullMQ retry стратегии
-    throw error;
-  }
 }
 
 /**
@@ -626,8 +587,7 @@ async function handleAnalyzeNewTicket(job) {
     targetLanguage,
   });
 
-  try {
-    const classifierKey = config.dify.keys.classifier;
+  const classifierKey = config.dify.keys.classifier;
     if (!classifierKey) {
       throw new Error('Dify classifier key is not configured');
     }
@@ -708,16 +668,6 @@ async function handleAnalyzeNewTicket(job) {
       title: parsed.title,
       sentiment: parsed.sentiment,
     });
-  } catch (error) {
-    logger.error('CMD_ANALYZE_NEW_TICKET: Error', {
-      jobId: job.id,
-      error: error.message,
-      stack: error.stack,
-    });
-
-    await sendResult('CMD_ANALYZE_NEW_TICKET', createErrorPayload(error, meta), meta);
-    throw error;
-  }
 }
 
 /**
@@ -735,9 +685,8 @@ async function handleTranslate(job) {
     targetLang,
   });
 
-  try {
-    // Используем classifier ключ для перевода (можно использовать отдельный ключ, если есть)
-    const workflowKey = config.dify.keys.classifier;
+  // Используем classifier ключ для перевода (можно использовать отдельный ключ, если есть)
+  const workflowKey = config.dify.keys.classifier;
     if (!workflowKey) {
       throw new Error('Dify workflow key is not configured');
     }
@@ -771,16 +720,6 @@ async function handleTranslate(job) {
       originalLength: text?.length,
       translatedLength: translatedText.length,
     });
-  } catch (error) {
-    logger.error('CMD_TRANSLATE: Error', {
-      jobId: job.id,
-      error: error.message,
-      stack: error.stack,
-    });
-
-    await sendResult('CMD_TRANSLATE', createErrorPayload(error, meta), meta);
-    throw error;
-  }
 }
 
 /**
@@ -797,8 +736,7 @@ async function handleKbListFiles(job) {
     orgId,
   });
 
-  try {
-    const adminKey = config.dify.keys.admin;
+  const adminKey = config.dify.keys.admin;
     if (!adminKey) {
       throw new Error('Dify admin key is not configured');
     }
@@ -850,19 +788,6 @@ async function handleKbListFiles(job) {
       orgId,
       filesCount: files.length,
     });
-  } catch (error) {
-    logger.error('CMD_KB_LIST_FILES: Error', {
-      jobId: job.id,
-      orgId,
-      error: error.message,
-      stack: error.stack,
-    });
-
-    await handleDifyResourceError(error, orgId);
-
-    await sendResult('CMD_KB_LIST_FILES', createErrorPayload(error, meta), meta);
-    throw error;
-  }
 }
 
 /**
@@ -880,8 +805,7 @@ async function handleKbDeleteFile(job) {
     fileId,
   });
 
-  try {
-    const adminKey = config.dify.keys.admin;
+  const adminKey = config.dify.keys.admin;
     if (!adminKey) {
       throw new Error('Dify admin key is not configured');
     }
@@ -908,20 +832,6 @@ async function handleKbDeleteFile(job) {
       orgId,
       fileId,
     });
-  } catch (error) {
-    logger.error('CMD_KB_DELETE_FILE: Error', {
-      jobId: job.id,
-      orgId,
-      fileId,
-      error: error.message,
-      stack: error.stack,
-    });
-
-    await handleDifyResourceError(error, orgId);
-
-    await sendResult('CMD_KB_DELETE_FILE', createErrorPayload(error, meta), meta);
-    throw error;
-  }
 }
 
 /**
@@ -963,7 +873,7 @@ async function fastLaneWorker(job) {
 }
 
 // Экспортируем функции для тестирования
-module.exports = fastLaneWorker;
+module.exports = createSafeProcessor('FastLane', fastLaneWorker);
 module.exports.assembleContext = assembleContext;
 module.exports.calculateLimits = calculateLimits;
 module.exports.pruneContext = pruneContext;

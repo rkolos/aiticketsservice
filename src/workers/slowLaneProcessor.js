@@ -3,6 +3,7 @@ const config = require('../config');
 const difyApi = require('../infrastructure/dify/api');
 const OrganizationService = require('../services/OrganizationService');
 const FileService = require('../services/FileService');
+const createSafeProcessor = require('../utils/safeProcessor');
 const ErrorHandler = require('../utils/errorHandler');
 const { sendResult } = require('../infrastructure/bullmq/resultQueue');
 const { formatTicketHistory } = require('../utils/historyFormatter');
@@ -152,27 +153,10 @@ async function handleKbAddFile(job) {
           fileUrl,
           error: fallbackError.message,
         });
-        const errorPayload = ErrorHandler.createErrorPayload(fallbackError, {
-          jobId: job.id,
-          orgId,
-          fileUrl,
-          fileName,
-          ...meta,
-        });
-        await sendResult('CMD_KB_ADD_FILE', errorPayload, { orgId, fileUrl, fileName, ...meta });
         throw fallbackError;
       }
     }
 
-    const errorPayload = ErrorHandler.createErrorPayload(error, {
-      jobId: job.id,
-      orgId,
-      fileUrl,
-      fileName,
-      ...meta,
-    });
-
-    await sendResult('CMD_KB_ADD_FILE', errorPayload, { orgId, fileUrl, fileName, ...meta });
     throw error;
   }
 }
@@ -266,13 +250,6 @@ async function handleArchiveTicket(job) {
 
     await ErrorHandler.handleDifyResourceError(error, orgId);
 
-    const errorPayload = ErrorHandler.createErrorPayload(error, {
-      jobId: job.id,
-      orgId,
-      ...meta,
-    });
-
-    await sendResult('CMD_ARCHIVE_TICKET', errorPayload, { orgId, ...meta });
     throw error;
   }
 }
@@ -300,12 +277,6 @@ async function handleSysResyncCache(job) {
       error: error.message,
     });
 
-    const errorPayload = ErrorHandler.createErrorPayload(error, {
-      jobId: job.id,
-      ...meta,
-    });
-
-    await sendResult('CMD_SYS_RESYNC_CACHE_ERROR', errorPayload, meta);
     throw error;
   }
 }
@@ -374,15 +345,8 @@ async function handleCleanupOrg(job) {
 
     await ErrorHandler.handleDifyResourceError(error, orgId);
 
-    const errorPayload = ErrorHandler.createErrorPayload(error, {
-      jobId: job.id,
-      orgId,
-      ...meta,
-    });
-
-    await sendResult('CMD_CLEANUP_ORG_ERROR', errorPayload, { orgId, ...meta });
     throw error;
   }
 }
 
-module.exports = slowLaneProcessor;
+module.exports = createSafeProcessor('SlowLane', slowLaneProcessor);

@@ -1,9 +1,11 @@
 node_modules/
 .env
+.env.*
 .DS_Store
 coverage/
 *.log
 dist/
 docker/redis_data/
 docker/postgres_data/
+volumes/
 
