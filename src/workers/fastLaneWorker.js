@@ -71,7 +71,6 @@ function assembleContext(adminChunks, historyChunks) {
  * @returns {Object} Объект с лимитами для context и history
  */
 function calculateLimits(contextTokens, historyTokens, queryTokens) {
-  const modelName = config.model.name;
   const modelContextWindow = config.model.contextWindow;
   const maxInputVariableSize = config.dify.workflow.maxInputVariableSize; // В байтах
   const maxRequestBodySize = config.dify.workflow.maxRequestBodySize; // В байтах
@@ -85,7 +84,6 @@ function calculateLimits(contextTokens, historyTokens, queryTokens) {
   // Лимит Dify на размер POST-запроса (в токенах)
   // Учитываем все переменные: context, history, query + системный промпт (~100 токенов)
   const systemPromptTokens = 100;
-  const totalTokens = contextTokens + historyTokens + queryTokens + systemPromptTokens;
   const difyRequestBodyLimitTokens = Math.floor(maxRequestBodySize / BYTES_PER_TOKEN) - queryTokens - systemPromptTokens;
 
   // Лимит контекстного окна модели (оставляем 20% для ответа)
@@ -244,7 +242,6 @@ function pruneHistory(history, modelName, historyLimit, jobId) {
 
   // Обрезаем историю с конца (удаляем старые сообщения)
   // Приблизительно вычисляем, сколько символов оставить
-  const BYTES_PER_TOKEN = 4;
   const charsToKeep = Math.floor((historyLimit / originalTokens) * history.length);
 
   // Обрезаем строку с конца
@@ -298,11 +295,14 @@ async function handleGenResponse(job) {
 
   try {
     // Шаг 1: Identify Datasets - получение ID баз знаний
+    // Используем ensureAdminKb и ensureHistoryKb вместо getKbIdsOrThrow,
+    // чтобы гарантировать наличие баз знаний (lazy loading)
     let adminKbId, historyKbId;
     try {
-      const kbIds = await OrganizationService.getKbIdsOrThrow(orgId);
-      adminKbId = kbIds.adminKbId;
-      historyKbId = kbIds.historyKbId;
+      // Используем ensureAdminKb для гарантии наличия admin базы
+      adminKbId = await OrganizationService.ensureAdminKb(orgId);
+      // Используем ensureHistoryKb для гарантии наличия history базы
+      historyKbId = await OrganizationService.ensureHistoryKb(orgId);
 
       logger.info('CMD_GEN_RESPONSE: Knowledge base IDs retrieved', {
         jobId: job.id,
@@ -311,17 +311,15 @@ async function handleGenResponse(job) {
         historyKbId,
       });
     } catch (error) {
-      if (error instanceof KbNotFoundError) {
-        logger.error('CMD_GEN_RESPONSE: Knowledge base not found', {
-          jobId: job.id,
-          orgId,
-          error: error.message,
-        });
+      logger.error('CMD_GEN_RESPONSE: Failed to ensure knowledge bases', {
+        jobId: job.id,
+        orgId,
+        error: error.message,
+        stack: error.stack,
+      });
 
-        // Отправка ошибки в resultQueue
-        await sendResult('CMD_GEN_RESPONSE', createErrorPayload(error, meta), meta);
-        return;
-      }
+      // Отправка ошибки в resultQueue
+      await sendResult('CMD_GEN_RESPONSE', createErrorPayload(error, meta), meta);
       throw error;
     }
 

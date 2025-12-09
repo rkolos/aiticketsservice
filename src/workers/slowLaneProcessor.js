@@ -364,7 +364,7 @@ async function handleCleanupOrg(job) {
       },
     };
 
-    await sendResult('CMD_CLEANUP_ORG', payload, { orgId });
+    await sendResult('CMD_CLEANUP_ORG', payload, { orgId, ...meta });
     return payload;
   } catch (error) {
     logger.error('CMD_CLEANUP_ORG failed', {
@@ -380,7 +380,7 @@ async function handleCleanupOrg(job) {
       ...meta,
     });
 
-    await sendResult('CMD_CLEANUP_ORG_ERROR', errorPayload, { orgId });
+    await sendResult('CMD_CLEANUP_ORG_ERROR', errorPayload, { orgId, ...meta });
     throw error;
   }
 }

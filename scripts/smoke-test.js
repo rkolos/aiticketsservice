@@ -341,6 +341,59 @@ const validators = {
     if (hasDocId) console.log(`   > Doc ID: ${hasDocId}`);
     return hasSummary;
   },
+
+  CMD_KB_LIST_FILES: (data) => {
+    if (!data.success && !data.data) return false;
+    const result = data.success ? data.data : data;
+    const isArray = Array.isArray(result);
+    if (isArray) {
+      console.log(`   > Files count: ${result.length}`);
+      if (result.length > 0) {
+        result.forEach((file, index) => {
+          console.log(`   > File ${index + 1}: ${file.name || file.id || 'unknown'}`);
+          if (file.id) console.log(`     - ID: ${file.id}`);
+          if (file.status) console.log(`     - Status: ${file.status}`);
+          if (file.word_count) console.log(`     - Word count: ${file.word_count}`);
+          if (file.created_at) console.log(`     - Created: ${file.created_at}`);
+        });
+      } else {
+        console.log('   > No files found');
+      }
+    }
+    return isArray;
+  },
+
+  CMD_KB_DELETE_FILE: (data) => {
+    if (!data.success && !data.data) return false;
+    const result = data.success ? data.data : data;
+    const hasDeleted = result.deleted === true || result.deleted === 'true';
+    const hasFileId = result.fileId && typeof result.fileId === 'string';
+    if (hasDeleted) console.log(`   > Deleted: true`);
+    if (hasFileId) console.log(`   > File ID: ${result.fileId}`);
+    return hasDeleted || hasFileId;
+  },
+
+  CMD_SYS_RESYNC_CACHE: (data) => {
+    if (data.status !== 'success') return false;
+    const stats = data.data || {};
+    const hasStats = typeof stats === 'object' && Object.keys(stats).length > 0;
+    if (hasStats) {
+      console.log(`   > Stats: ${JSON.stringify(stats)}`);
+    }
+    return hasStats;
+  },
+
+  CMD_CLEANUP_ORG: (data) => {
+    if (data.status !== 'success') return false;
+    const hasOrgId = data.data?.orgId && typeof data.data.orgId === 'string';
+    const hasDeleted = data.data?.deleted && typeof data.data.deleted === 'object';
+    if (hasOrgId) console.log(`   > Org ID: ${data.data.orgId}`);
+    if (hasDeleted) {
+      console.log(`   > Deleted adminKbId: ${data.data.deleted.adminKbId || 'none'}`);
+      console.log(`   > Deleted historyKbId: ${data.data.deleted.historyKbId || 'none'}`);
+    }
+    return hasOrgId && hasDeleted;
+  },
 };
 
 /**
@@ -471,11 +524,12 @@ async function main() {
 
   const testResults = [];
   const startTime = Date.now();
+  let uploadedFileId = null; // Для хранения fileId из CMD_KB_ADD_FILE
 
   try {
     // TEST 1: CMD_ANALYZE_NEW_TICKET
     const test1 = await runTest(
-      'TEST 1/5: Analyzing Ticket',
+      'TEST 1/10: Analyzing Ticket',
       'CMD_ANALYZE_NEW_TICKET',
       {
         text: 'У меня не работает вход в систему, ошибка 500',
@@ -489,32 +543,9 @@ async function main() {
     testResults.push({ name: 'CMD_ANALYZE_NEW_TICKET', passed: test1 });
     await sleep(2000);
 
-    // TEST 2: CMD_GEN_RESPONSE с lang
+    // TEST 2: CMD_TRANSLATE
     const test2 = await runTest(
-      'TEST 2/5: Generating Response (EN)',
-      'CMD_GEN_RESPONSE',
-      {
-        orgId: 'test-org-smoke',
-        query: 'How to reset password?',
-        // История в markdown-строке с указанием ролей
-        history:
-          'User: I forgot my password\n' +
-          'Assistant: I can help you reset it\n' +
-          'User: Thanks, what should I do next?\n' +
-          'Assistant: I will guide you through the reset steps.',
-        lang: 'en',
-        meta: {},
-      },
-      validators.CMD_GEN_RESPONSE,
-      30000, // Увеличенный таймаут для генерации ответа
-      entryQueue
-    );
-    testResults.push({ name: 'CMD_GEN_RESPONSE', passed: test2 });
-    await sleep(2000);
-
-    // TEST 3: CMD_TRANSLATE
-    const test3 = await runTest(
-      'TEST 3/5: Translation',
+      'TEST 2/10: Translation',
       'CMD_TRANSLATE',
       {
         text: 'Привет мир',
@@ -525,30 +556,95 @@ async function main() {
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_TRANSLATE', passed: test3 });
+    testResults.push({ name: 'CMD_TRANSLATE', passed: test2 });
     await sleep(2000);
 
-    // TEST 4: CMD_KB_ADD_FILE
-    // Используем публичный файл (например, README из GitHub)
-    const test4 = await runTest(
-      'TEST 4/5: File Upload',
+    // TEST 3: CMD_KB_ADD_FILE (первый файл - LangChain README)
+    // Загружаем файлы ПЕРЕД генерацией ответа, чтобы использовать их как базу знаний
+    const test3 = await runTest(
+      'TEST 3/10: File Upload (LangChain README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
         fileUrl: 'https://raw.githubusercontent.com/langchain-ai/langchain/master/README.md',
-        fileName: 'test-readme.md',
+        fileName: 'langchain-readme.md',
+        meta: {},
+      },
+      (data) => {
+        const result = validators.CMD_KB_ADD_FILE(data);
+        // Сохраняем fileId для последующего удаления
+        if (result && data.data?.fileId) {
+          uploadedFileId = data.data.fileId;
+        }
+        return result;
+      },
+      10000,
+      entryQueue
+    );
+    testResults.push({ name: 'CMD_KB_ADD_FILE (first)', passed: test3 });
+    await sleep(2000);
+
+    // TEST 4: CMD_KB_ADD_FILE (второй файл - TypeScript README)
+    const test4 = await runTest(
+      'TEST 4/10: File Upload (TypeScript README)',
+      'CMD_KB_ADD_FILE',
+      {
+        orgId: 'test-org-smoke',
+        fileUrl: 'https://raw.githubusercontent.com/microsoft/TypeScript/main/README.md',
+        fileName: 'typescript-readme.md',
         meta: {},
       },
       validators.CMD_KB_ADD_FILE,
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_KB_ADD_FILE', passed: test4 });
+    testResults.push({ name: 'CMD_KB_ADD_FILE (second)', passed: test4 });
+    // Даем время на индексацию файлов перед использованием в RAG
+    await sleep(5000);
+    
+    // Синхронизируем кэш, чтобы база знаний была доступна для CMD_GEN_RESPONSE
+    console.log(colorize('⏳ Syncing cache to ensure knowledge base is available...', 'yellow'));
+    const cacheSync = await runTest(
+      'CACHE SYNC: Syncing cache before RAG',
+      'CMD_SYS_RESYNC_CACHE',
+      {
+        meta: {},
+      },
+      validators.CMD_SYS_RESYNC_CACHE,
+      10000,
+      entryQueue
+    );
+    if (!cacheSync) {
+      console.log(colorize('⚠️  Cache sync failed, but continuing...', 'yellow'));
+    }
     await sleep(2000);
 
-    // TEST 5: CMD_ARCHIVE_TICKET
+    // TEST 5: CMD_GEN_RESPONSE - вопрос по содержимому загруженных файлов
+    // Теперь файлы загружены и проиндексированы, можно использовать их как базу знаний
     const test5 = await runTest(
-      'TEST 5/5: Archiving Ticket',
+      'TEST 5/10: Generating Response (RAG with uploaded files)',
+      'CMD_GEN_RESPONSE',
+      {
+        orgId: 'test-org-smoke',
+        query: 'What is LangChain and what are its main features?',
+        // История в markdown-строке с указанием ролей
+        history:
+          'User: I want to learn about AI frameworks\n' +
+          'Assistant: I can help you understand AI frameworks. What would you like to know?\n' +
+          'User: Tell me about LangChain',
+        lang: 'en',
+        meta: {},
+      },
+      validators.CMD_GEN_RESPONSE,
+      30000, // Увеличенный таймаут для генерации ответа с RAG
+      entryQueue
+    );
+    testResults.push({ name: 'CMD_GEN_RESPONSE', passed: test5 });
+    await sleep(2000);
+
+    // TEST 6: CMD_ARCHIVE_TICKET
+    const test6 = await runTest(
+      'TEST 6/10: Archiving Ticket',
       'CMD_ARCHIVE_TICKET',
       {
         orgId: 'test-org-smoke',
@@ -566,7 +662,74 @@ async function main() {
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_ARCHIVE_TICKET', passed: test5 });
+    testResults.push({ name: 'CMD_ARCHIVE_TICKET', passed: test6 });
+    await sleep(2000);
+
+    // TEST 7: CMD_KB_LIST_FILES
+    const test7 = await runTest(
+      'TEST 7/10: List Files',
+      'CMD_KB_LIST_FILES',
+      {
+        orgId: 'test-org-smoke',
+        meta: {},
+      },
+      validators.CMD_KB_LIST_FILES,
+      10000,
+      entryQueue
+    );
+    testResults.push({ name: 'CMD_KB_LIST_FILES', passed: test7 });
+    await sleep(2000);
+
+    // TEST 8: CMD_KB_DELETE_FILE
+    // Удаляем файл, загруженный в TEST 3
+    if (!uploadedFileId) {
+      console.log(colorize('⚠️  Skipping CMD_KB_DELETE_FILE: no fileId from previous upload', 'yellow'));
+      testResults.push({ name: 'CMD_KB_DELETE_FILE', passed: false });
+    } else {
+      const test8 = await runTest(
+        'TEST 8/10: Delete File',
+        'CMD_KB_DELETE_FILE',
+        {
+          orgId: 'test-org-smoke',
+          fileId: uploadedFileId,
+          meta: {},
+        },
+        validators.CMD_KB_DELETE_FILE,
+        10000,
+        entryQueue
+      );
+      testResults.push({ name: 'CMD_KB_DELETE_FILE', passed: test8 });
+    }
+    await sleep(2000);
+
+    // TEST 9: CMD_SYS_RESYNC_CACHE
+    const test9 = await runTest(
+      'TEST 9/10: Sync Cache',
+      'CMD_SYS_RESYNC_CACHE',
+      {
+        meta: {},
+      },
+      validators.CMD_SYS_RESYNC_CACHE,
+      10000,
+      entryQueue
+    );
+    testResults.push({ name: 'CMD_SYS_RESYNC_CACHE', passed: test9 });
+    await sleep(2000);
+
+    // TEST 10: CMD_CLEANUP_ORG
+    // ВНИМАНИЕ: Этот тест удаляет данные организации, поэтому он последний
+    const test10 = await runTest(
+      'TEST 10/10: Cleanup Org',
+      'CMD_CLEANUP_ORG',
+      {
+        orgId: 'test-org-smoke',
+        meta: {},
+      },
+      validators.CMD_CLEANUP_ORG,
+      15000, // Увеличенный таймаут для удаления датасетов
+      entryQueue
+    );
+    testResults.push({ name: 'CMD_CLEANUP_ORG', passed: test10 });
   } catch (error) {
     console.error(colorize(`\n❌ Fatal error: ${error.message}`, 'red'));
     console.error(error.stack);
