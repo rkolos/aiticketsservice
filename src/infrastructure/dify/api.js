@@ -16,10 +16,39 @@ const logger = require('../../utils/logger');
  */
 async function runWorkflow(apiKey, inputs, user) {
   try {
+    // Dify ожидает history/context в строковом виде. Нормализуем вход.
+    const normalizedInputs = { ...inputs };
+    if (normalizedInputs.history && typeof normalizedInputs.history !== 'string') {
+      if (Array.isArray(normalizedInputs.history)) {
+        normalizedInputs.history = normalizedInputs.history
+          .map((item) => {
+            if (typeof item === 'string') return item;
+            if (item && item.role && item.content) return `${item.role}: ${item.content}`;
+            return JSON.stringify(item);
+          })
+          .join('\n');
+      } else {
+        normalizedInputs.history = String(normalizedInputs.history);
+      }
+    }
+    if (normalizedInputs.context && typeof normalizedInputs.context !== 'string') {
+      if (Array.isArray(normalizedInputs.context)) {
+        normalizedInputs.context = normalizedInputs.context
+          .map((item) => {
+            if (typeof item === 'string') return item;
+            if (item && item.title && item.content) return `${item.title}: ${item.content}`;
+            return JSON.stringify(item);
+          })
+          .join('\n');
+      } else {
+        normalizedInputs.context = String(normalizedInputs.context);
+      }
+    }
+
     const response = await difyClient.post(
       '/workflows/run',
       {
-        inputs,
+        inputs: normalizedInputs,
         response_mode: 'blocking',
         user,
       },
@@ -249,7 +278,33 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
       headers,
     });
 
-    return response.data;
+    const data = response.data || {};
+
+    // Нормализуем форму ответа: документ может приходить в разных вложениях/поля
+    const documentId =
+      data.document_id ||
+      data.documentId ||
+      data.id ||
+      data.task_id ||
+      (data.document && (data.document.document_id || data.document.id)) ||
+      (data.data && (data.data.document_id || data.data.documentId || data.data.id)) ||
+      (data.result && (data.result.document_id || data.result.documentId || data.result.id)) ||
+      (data.output && (data.output.document_id || data.output.id)) ||
+      null;
+
+    const status =
+      data.status ||
+      (data.data && (data.data.status || data.data.indexing_status)) ||
+      (data.result && (data.result.status || data.result.indexing_status)) ||
+      data.indexing_status ||
+      // Dify может вернуть пустой статус — по умолчанию считаем, что документ в индексации
+      'indexing';
+
+    return {
+      ...data,
+      document_id: documentId,
+      status,
+    };
   } catch (error) {
     logger.error('Error uploading file', {
       datasetId,
@@ -331,12 +386,7 @@ async function retrieveChunks(apiKey, datasetId, query, limit = 5) {
       `/datasets/${datasetId}/retrieve`,
       {
         query,
-        retrieval_model: {
-          search_method: 'hybrid',
-          rerun_model: null,
-          top_k: limit,
-          score_threshold_enabled: false,
-        },
+        top_k: limit,
       },
       {
         headers: {

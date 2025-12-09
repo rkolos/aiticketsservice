@@ -17,6 +17,7 @@ const schema = Joi.object({
   DIFY_KEY_CLASSIFIER: Joi.string().required(),
   DIFY_KEY_SUMMARIZER: Joi.string().required(),
   DIFY_KEY_RESPONSE_WORKFLOW: Joi.string().required(),
+  DIFY_LIST_DATASETS_PAGE_LIMIT: Joi.number().default(50),
 
   // Workers (BullMQ)
   WORKER_FAST_LANE_CONCURRENCY: Joi.number().default(15),

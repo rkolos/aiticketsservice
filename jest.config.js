@@ -7,5 +7,7 @@ module.exports = {
     '!src/config/index.js',
   ],
   setupFilesAfterEnv: ['<rootDir>/tests/setup.js', '<rootDir>/tests/teardown.js'],
+  // Явно указываем кастомный sequencer, чтобы не тянуть @jest/test-sequencer
+  testSequencer: '<rootDir>/tests/customTestSequencer.js',
 };
 

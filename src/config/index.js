@@ -36,6 +36,9 @@ module.exports = {
       maxInputVariableSize: parseInt(value.DIFY_WORKFLOW_MAX_INPUT_VARIABLE_SIZE, 10), // В байтах
       maxRequestBodySize: parseInt(value.DIFY_WORKFLOW_MAX_REQUEST_BODY_SIZE, 10), // В байтах
     },
+    pagination: {
+      listDatasetsPageLimit: parseInt(value.DIFY_LIST_DATASETS_PAGE_LIMIT, 10),
+    },
   },
   workers: {
     fastLane: {

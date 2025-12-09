@@ -96,7 +96,7 @@ class OrganizationService {
 
     // Пагинация для получения всех датасетов
     let page = 1;
-    const limit = 50; // Размер страницы
+    const limit = config.dify.pagination?.listDatasetsPageLimit || 50; // Размер страницы из конфига
     let allDatasets = [];
     let hasMore = true;
 
