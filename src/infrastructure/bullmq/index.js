@@ -4,6 +4,7 @@ const config = require('../../config');
 const logger = require('../../utils/logger');
 const fastLaneWorker = require('../../workers/fastLaneWorker');
 const slowLaneProcessor = require('../../workers/slowLaneProcessor');
+const routerProcessor = require('../../workers/routerProcessor');
 
 /**
  * Инициализация всех воркеров BullMQ
@@ -16,6 +17,22 @@ const slowLaneProcessor = require('../../workers/slowLaneProcessor');
  */
 function initWorkers() {
   logger.info('Initializing BullMQ workers...');
+
+  // Воркер 0: Router Worker (Единая точка входа)
+  // Маршрутизирует задачи из ai-entry-queue в соответствующие внутренние очереди
+  const routerWorkerInstance = createWorker(
+    QUEUES.ENTRY,
+    routerProcessor,
+    {
+      concurrency: 100, // Высокий параллелизм, так как операций ввода-вывода нет, только перекладывание в Redis
+      // Router Worker не нагружает CPU или Dify, только Redis операции
+    }
+  );
+
+  logger.info('Router worker initialized', {
+    queue: QUEUES.ENTRY,
+    concurrency: 100,
+  });
 
   // Воркер 1: Fast Lane (Интерактивная очередь)
   const fastLaneWorkerInstance = createWorker(
@@ -57,6 +74,7 @@ function initWorkers() {
   });
 
   return {
+    routerWorker: routerWorkerInstance,
     fastLaneWorker: fastLaneWorkerInstance,
     slowLaneWorker,
   };

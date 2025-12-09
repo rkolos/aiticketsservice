@@ -14,8 +14,9 @@ Main App -> Redis (BullMQ) -> AI Worker <-> Dify API
 
 **Очереди:**
 
-- **`ai-interactive-queue` (Fast Lane)** — Чат, перевод, анализ, RAG-генерация (высокий concurrency)
-- **`ai-background-queue` (Slow Lane)** — Загрузка файлов, архивация, системная синхронизация (низкий concurrency, Rate Limiter)
+- **`ai-entry-queue` (Entry Point)** — Единая точка входа для всех задач. Внешние сервисы должны отправлять задачи только в эту очередь. Router Worker автоматически распределяет задачи по внутренним очередям.
+- **`ai-interactive-queue` (Fast Lane)** — Внутренняя очередь для интерактивных задач: чат, перевод, анализ, RAG-генерация (высокий concurrency)
+- **`ai-background-queue` (Slow Lane)** — Внутренняя очередь для фоновых задач: загрузка файлов, архивация, системная синхронизация (низкий concurrency, Rate Limiter)
 - **`ai-results-queue` (Output)** — Единый канал для возврата результатов
 
 Подробное описание архитектуры и спецификации см. в `about/about_project.md`.
