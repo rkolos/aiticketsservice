@@ -245,19 +245,13 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
   try {
     const formData = new FormData();
 
-    // Добавляем файл с опциями
+    // Добавляем файл (без принудительного contentType/knownLength — упрощаем multipart)
     const fileOptions = {
       filename: fileName,
     };
-
-    // Если известен размер файла, указываем knownLength для предотвращения chunked encoding
-    if (fileSize !== null && fileSize !== undefined) {
-      fileOptions.knownLength = fileSize;
-    }
-
     formData.append('file', fileStream, fileOptions);
 
-    // Добавляем данные о правилах индексации
+    // Параметры индексации: отправляем только data (как в официальной схеме)
     const dataField = JSON.stringify({
       indexing_technique: 'high_quality',
       process_rule: {
@@ -265,10 +259,9 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
         rules: {},
       },
     });
-
     formData.append('data', dataField);
 
-    // Получить заголовки от formData (включая Content-Type с boundary)
+    // Заголовки multipart
     const headers = {
       ...formData.getHeaders(),
       Authorization: `Bearer ${apiKey}`,
@@ -276,6 +269,9 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
 
     const response = await difyClient.post(`/datasets/${datasetId}/document/create_by_file`, formData, {
       headers,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      validateStatus: (status) => status < 500, // хотим видеть тело 4xx
     });
 
     const data = response.data || {};
@@ -306,12 +302,23 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
       status,
     };
   } catch (error) {
-    logger.error('Error uploading file', {
-      datasetId,
-      fileName,
-      fileSize,
-      error: error.message,
-    });
+    if (error.response) {
+      logger.error('Error uploading file: response error', {
+        datasetId,
+        fileName,
+        fileSize,
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data,
+      });
+    } else {
+      logger.error('Error uploading file', {
+        datasetId,
+        fileName,
+        fileSize,
+        error: error.message,
+      });
+    }
     throw error;
   }
 }

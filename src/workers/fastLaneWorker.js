@@ -446,7 +446,7 @@ async function handleGenResponse(job) {
       query,
       history: prunedHistoryResult.history,
       context: prunedContextResult.context,
-      language: lang, // Передаем значение (или undefined)
+      lang, // Исправлено: имя переменной в workflow 'lang', а не 'language'
     };
 
     // Получаем ответ от Dify Workflow
@@ -497,7 +497,16 @@ async function handleGenResponse(job) {
     // Шаг 7: Extract text and sources - извлечение текста ответа и источников
     // Структура ответа Dify Workflow может варьироваться
     // Обычно текст находится в outputs.text или outputs.output
+    const outputs =
+      workflowOutputs.outputs ||
+      workflowOutputs.data?.outputs ||
+      workflowOutputs;
+
     const text =
+      outputs?.text ||
+      outputs?.output ||
+      outputs?.answer ||
+      outputs?.response ||
       workflowOutputs.text ||
       workflowOutputs.output ||
       workflowOutputs.answer ||
@@ -628,7 +637,7 @@ async function handleAnalyzeNewTicket(job) {
     // Вызов Workflow Classifier
     const workflowInputs = {
       message: text,
-      language: targetLanguage,
+      lang: targetLanguage, // Исправлено: имя переменной в workflow 'lang', а не 'language'
     };
 
     const workflowOutputs = await difyApi.runWorkflow(
@@ -637,8 +646,32 @@ async function handleAnalyzeNewTicket(job) {
       meta.user || 'system'
     );
 
-    // Парсинг JSON ответа
-    let jsonText = workflowOutputs.text || workflowOutputs.output || workflowOutputs.answer || '';
+    // Логируем сырой ответ от workflow для диагностики формата
+    logger.info('CMD_ANALYZE_NEW_TICKET: raw workflow output', {
+      jobId: job.id,
+      raw: workflowOutputs,
+    });
+
+    // Парсинг JSON ответа: учитываем разные расположения outputs
+    const outputs =
+      workflowOutputs.outputs ||
+      workflowOutputs.data?.outputs ||
+      workflowOutputs;
+
+    let jsonText =
+      outputs?.text ||
+      outputs?.output ||
+      outputs?.answer ||
+      outputs?.response ||
+      workflowOutputs.text ||
+      workflowOutputs.output ||
+      workflowOutputs.answer ||
+      workflowOutputs.response ||
+      '';
+
+    if (!jsonText || jsonText.trim().length === 0) {
+      throw new Error('Classifier returned empty text');
+    }
 
     // Очистка от Markdown оберток
     const cleanedJson = llmParser.cleanLlmJson(jsonText);

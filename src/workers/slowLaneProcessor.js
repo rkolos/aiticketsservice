@@ -40,6 +40,19 @@ async function slowLaneProcessor(job) {
 async function handleKbAddFile(job) {
   const { orgId, fileUrl, fileName, meta = {} } = job.data || {};
   const adminKey = config.dify.keys.admin;
+  let adminKbId;
+
+  // Вспомогательная функция: читаем стрим в строку (для fallback)
+  const streamToString = async (stream) => {
+    return new Promise((resolve, reject) => {
+      let data = '';
+      stream.on('data', (chunk) => {
+        data += chunk.toString('utf8');
+      });
+      stream.on('end', () => resolve(data));
+      stream.on('error', reject);
+    });
+  };
 
   try {
     if (!adminKey) {
@@ -51,7 +64,7 @@ async function handleKbAddFile(job) {
     }
 
     // 1) Lazy init KB
-    const adminKbId = await OrganizationService.ensureAdminKb(orgId);
+    adminKbId = await OrganizationService.ensureAdminKb(orgId);
     logger.info('Admin KB ensured', { orgId, adminKbId });
 
     // 2) Download file
@@ -82,7 +95,7 @@ async function handleKbAddFile(job) {
       },
     };
 
-    await sendResult('CMD_KB_ADD_FILE', payload, { orgId, fileUrl, fileName });
+    await sendResult('CMD_KB_ADD_FILE', payload, { orgId, fileUrl, fileName, ...meta });
     return payload;
   } catch (error) {
     logger.error('CMD_KB_ADD_FILE failed', {
@@ -95,6 +108,62 @@ async function handleKbAddFile(job) {
     // Инвалидация кэша при ошибках ресурсов Dify
     await ErrorHandler.handleDifyResourceError(error, orgId);
 
+    // Fallback: если Dify требует indexing_technique и отклоняет uploadFile,
+    // пробуем загрузить как текстовый документ.
+    const isIndexingError =
+      adminKbId &&
+      (error?.message?.toLowerCase().includes('indexing_technique is required') ||
+        error?.code === 'invalid_param');
+
+    if (isIndexingError) {
+      try {
+        logger.warn('CMD_KB_ADD_FILE: fallback to createDocumentByText due to indexing_technique error', {
+          orgId,
+          fileName,
+          fileUrl,
+        });
+
+        const { stream: retryStream } = await FileService.downloadStream(fileUrl);
+        const fileText = await streamToString(retryStream);
+
+        const createResult = await difyApi.createDocumentByText(adminKey, adminKbId, fileName, fileText);
+
+        const payload = {
+          status: 'success',
+          data: {
+            fileId: createResult?.document_id || createResult?.id || createResult?.task_id,
+            status: createResult?.status || 'indexing',
+            fileName,
+            orgId,
+            fallback: 'createDocumentByText',
+          },
+          meta: {
+            jobId: job.id,
+            ...meta,
+          },
+        };
+
+        await sendResult('CMD_KB_ADD_FILE', payload, { orgId, fileUrl, fileName, ...meta });
+        return payload;
+      } catch (fallbackError) {
+        logger.error('CMD_KB_ADD_FILE fallback failed', {
+          orgId,
+          fileName,
+          fileUrl,
+          error: fallbackError.message,
+        });
+        const errorPayload = ErrorHandler.createErrorPayload(fallbackError, {
+          jobId: job.id,
+          orgId,
+          fileUrl,
+          fileName,
+          ...meta,
+        });
+        await sendResult('CMD_KB_ADD_FILE', errorPayload, { orgId, fileUrl, fileName, ...meta });
+        throw fallbackError;
+      }
+    }
+
     const errorPayload = ErrorHandler.createErrorPayload(error, {
       jobId: job.id,
       orgId,
@@ -103,7 +172,7 @@ async function handleKbAddFile(job) {
       ...meta,
     });
 
-    await sendResult('CMD_KB_ADD_FILE_ERROR', errorPayload, { orgId, fileUrl, fileName });
+    await sendResult('CMD_KB_ADD_FILE', errorPayload, { orgId, fileUrl, fileName, ...meta });
     throw error;
   }
 }
@@ -137,12 +206,15 @@ async function handleArchiveTicket(job) {
       {
         ticket_history: formattedHistory,
         language: lang, // Передаем значение (или undefined)
+        // Для совместимости с конфигурациями, где message обязательна (ошибка "message is required")
+        message: formattedHistory,
       },
       `archive-${orgId}-${Date.now()}`
     );
 
     const summaryText =
       (typeof summarizeResult === 'string' && summarizeResult) ||
+      summarizeResult?.outputs?.text ||
       summarizeResult?.summary ||
       summarizeResult?.output ||
       summarizeResult?.text ||
@@ -173,7 +245,7 @@ async function handleArchiveTicket(job) {
     const payload = {
       status: 'success',
       data: {
-        docId: createResult?.document_id || createResult?.id,
+        docId: createResult?.document_id || createResult?.id || createResult?.task_id,
         docName,
         summary: summaryText,
         orgId,
@@ -184,7 +256,7 @@ async function handleArchiveTicket(job) {
       },
     };
 
-    await sendResult('CMD_ARCHIVE_TICKET', payload, { orgId, ticketId });
+    await sendResult('CMD_ARCHIVE_TICKET', payload, { orgId, ticketId, ...meta });
     return payload;
   } catch (error) {
     logger.error('CMD_ARCHIVE_TICKET failed', {
@@ -200,7 +272,7 @@ async function handleArchiveTicket(job) {
       ...meta,
     });
 
-    await sendResult('CMD_ARCHIVE_TICKET_ERROR', errorPayload, { orgId });
+    await sendResult('CMD_ARCHIVE_TICKET', errorPayload, { orgId, ...meta });
     throw error;
   }
 }
