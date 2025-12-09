@@ -414,6 +414,55 @@ async function retrieveChunks(apiKey, datasetId, query, limit = 5) {
   }
 }
 
+/**
+ * Выполняет поиск чанков в датасете с поддержкой Hybrid Search и Rerank.
+ * @param {string} datasetId - UUID датасета.
+ * @param {string} query - Текст запроса.
+ * @param {object} [retrievalConfig] - Переопределение настроек поиска.
+ */
+async function retrieve(datasetId, query, retrievalConfig = {}) {
+  try {
+    // Базовая конфигурация для Jina Reranker
+    const defaultModel = {
+      search_method: 'hybrid_search',
+      reranking_enable: true,
+      reranking_mode: 'reranking_model', // Обязательный параметр режима
+      reranking_model: {
+        reranking_provider_name: 'jina',
+        reranking_model_name: 'jina-reranker-v2-base-multilingual'
+      },
+      weights: 0.7, // Приоритет семантики (0.7) над ключевыми словами
+      top_k: 5,
+      score_threshold_enabled: true,
+      score_threshold: 0.5
+    };
+
+    const payload = {
+      query: query,
+      retrieval_model: { ...defaultModel, ...retrievalConfig }
+    };
+
+    const response = await difyClient.post(
+      `/datasets/${datasetId}/retrieve`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${config.dify.keys.admin}`,
+        },
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    logger.error('Error retrieving with Hybrid Search', {
+      datasetId,
+      query: query.substring(0, 50),
+      error: error.message,
+    });
+    throw error;
+  }
+}
+
 module.exports = {
   // Workflow & Chat
   runWorkflow,

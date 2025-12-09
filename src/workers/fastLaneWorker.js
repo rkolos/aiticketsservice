@@ -309,41 +309,89 @@ async function handleGenResponse(job) {
       historyKbId,
     });
 
-    // Шаг 2: Retrieval - параллельный поиск чанков из обеих баз
-    const adminKey = config.dify.keys.admin;
-    if (!adminKey) {
-      throw new Error('Dify admin key is not configured');
-    }
+    // Шаг 2: Retrieval - поиск контекста из базы знаний с Hybrid Search и Reranking
+    let context = '';
 
-    // Параллельный поиск с graceful degradation
-    // Используем Promise.all для параллельного выполнения запросов
-    const [adminChunks, historyChunks] = await Promise.all([
-      // Для adminKbId: Top-3 чанка
-      difyApi.retrieveChunks(adminKey, adminKbId, query, 3).catch((error) => {
-        logger.warn('CMD_GEN_RESPONSE: Error retrieving admin chunks', {
+    // Поиск в административной базе знаний с Jina Reranker
+    if (adminKbId) {
+      try {
+        const results = await difyApi.retrieve(adminKbId, query);
+        if (results && results.records && results.records.length > 0) {
+          // Склеиваем сегменты в строку контекста
+          context = results.records
+            .map(r => r.segment?.content || r.content || '')
+            .filter(content => content.trim().length > 0)
+            .join('\n\n');
+
+          logger.info(`CMD_GEN_RESPONSE: Retrieved ${results.records.length} chunks via Hybrid Search and Jina Reranker`, {
+            jobId: job.id,
+            orgId,
+            adminKbId,
+          });
+        } else {
+          logger.info('CMD_GEN_RESPONSE: No relevant chunks found via Hybrid Search', {
+            jobId: job.id,
+            orgId,
+            adminKbId,
+          });
+        }
+      } catch (error) {
+        logger.warn('CMD_GEN_RESPONSE: RAG Retrieval failed, continuing without context', {
           jobId: job.id,
           orgId,
           adminKbId,
           error: error.message,
         });
-        // Graceful degradation: возвращаем пустой массив при ошибке
-        return [];
-      }),
-      // Для historyKbId: Top-2 чанка
-      difyApi.retrieveChunks(adminKey, historyKbId, query, 2).catch((error) => {
+        // Продолжаем с пустым контекстом (graceful degradation)
+      }
+    } else {
+      logger.info('CMD_GEN_RESPONSE: No admin knowledge base available', {
+        jobId: job.id,
+        orgId,
+      });
+    }
+
+    // Получение чанков из истории тикетов (простой поиск для обратной совместимости)
+    let historyChunks = [];
+    if (historyKbId) {
+      try {
+        const adminKey = config.dify.keys.admin;
+        if (!adminKey) {
+          throw new Error('Dify admin key is not configured');
+        }
+        historyChunks = await difyApi.retrieveChunks(adminKey, historyKbId, query, 2);
+      } catch (error) {
         logger.warn('CMD_GEN_RESPONSE: Error retrieving history chunks', {
           jobId: job.id,
           orgId,
           historyKbId,
           error: error.message,
         });
-        // Graceful degradation: возвращаем пустой массив при ошибке
-        return [];
-      }),
-    ]);
+        // Graceful degradation: продолжаем с пустым массивом
+      }
+    }
 
-    // Шаг 3: Context Assembly - сборка контекста из чанков
-    const rawContext = assembleContext(adminChunks, historyChunks);
+    // Шаг 3: Context Assembly - сборка контекста из Hybrid Search результатов и истории
+    // context уже содержит результаты Hybrid Search с Jina Reranker
+    // Добавляем результаты из истории тикетов для полноты контекста
+    let rawContext = context;
+    if (historyChunks && historyChunks.length > 0) {
+      const historyContext = historyChunks
+        .map(chunk => chunk.content || chunk.segment?.content || '')
+        .filter(content => content.trim().length > 0)
+        .join('\n\n');
+
+      if (historyContext.trim()) {
+        rawContext = rawContext.trim()
+          ? `${rawContext}\n\n## История тикетов\n\n${historyContext}`
+          : `## История тикетов\n\n${historyContext}`;
+      }
+    }
+
+    if (!rawContext.trim()) {
+      rawContext = 'Контекст не найден';
+    }
+
     const formattedHistory = historyFormatter.formatTicketHistory(history);
 
     // Шаг 4: Подсчет токенов и проверка лимитов
@@ -371,14 +419,45 @@ async function handleGenResponse(job) {
       tokenCounts.query
     );
 
-    // Обрезка контекста
-    const prunedContextResult = pruneContext(
-      adminChunks,
-      historyChunks,
-      modelName,
-      limits.contextLimit,
-      job.id
-    );
+    // Обрезка контекста (теперь это простая строка из Hybrid Search)
+    const originalContextTokens = tokenCounter.countTokens(rawContext, modelName);
+    let prunedContext = rawContext;
+    let contextTokens = originalContextTokens;
+    let contextWasPruned = false;
+
+    if (contextTokens > limits.contextLimit) {
+      // Обрезаем контекст до лимита токенов
+      const charsPerToken = 4; // Примерная оценка
+      const maxChars = limits.contextLimit * charsPerToken;
+      prunedContext = rawContext.substring(0, maxChars);
+      contextTokens = tokenCounter.countTokens(prunedContext, modelName);
+      contextWasPruned = true;
+
+      logger.warn('CMD_GEN_RESPONSE: Context pruned due to token limit', {
+        jobId: job.id,
+        orgId,
+        originalTokens: originalContextTokens,
+        prunedTokens: contextTokens,
+        contextLimit: limits.contextLimit,
+      });
+    }
+
+    // Создаем prunedContextResult для совместимости с остальным кодом
+    const prunedContextResult = {
+      context: prunedContext,
+      adminChunks: [], // Пустой массив для совместимости
+      historyChunks: historyChunks || [],
+      pruningInfo: {
+        originalTokens: originalContextTokens,
+        prunedTokens: contextTokens,
+        removedHistoryChunks: 0,
+        trimmedAdminChunks: contextWasPruned,
+        originalAdminChunksCount: 0,
+        originalHistoryChunksCount: historyChunks?.length || 0,
+        prunedAdminChunksCount: 0,
+        prunedHistoryChunksCount: historyChunks?.length || 0,
+      }
+    };
 
     // Обрезка истории
     const prunedHistoryResult = pruneHistory(
