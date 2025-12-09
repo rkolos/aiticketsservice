@@ -112,7 +112,7 @@ async function handleKbAddFile(job) {
  * Архивация тикета: суммаризация и запись в History KB
  */
 async function handleArchiveTicket(job) {
-  const { orgId, fullTicketHistory, meta = {} } = job.data || {};
+  const { orgId, fullTicketHistory, lang, meta = {} } = job.data || {};
   const adminKey = config.dify.keys.admin;
   const summarizerKey = config.dify.keys.summarizer;
 
@@ -134,7 +134,10 @@ async function handleArchiveTicket(job) {
     // 3) Суммаризация
     const summarizeResult = await difyApi.runWorkflow(
       summarizerKey,
-      { ticket_history: formattedHistory },
+      {
+        ticket_history: formattedHistory,
+        language: lang, // Передаем значение (или undefined)
+      },
       `archive-${orgId}-${Date.now()}`
     );
 

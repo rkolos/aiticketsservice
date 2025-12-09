@@ -162,6 +162,7 @@ describe('Fast Lane Worker - Integration Tests', () => {
       expect(workflowCall[1]).toHaveProperty('query', 'Как сбросить пароль?');
       expect(workflowCall[1]).toHaveProperty('history');
       expect(workflowCall[1]).toHaveProperty('context');
+      expect(workflowCall[1]).toHaveProperty('language', undefined); // lang не передан
       expect(workflowCall[2]).toBe('user-789');
 
       // Проверяем, что history отформатирован
@@ -185,6 +186,70 @@ describe('Fast Lane Worker - Integration Tests', () => {
       expect(resultCall[1].data.usage).toHaveProperty('completionTokens', 500);
       expect(resultCall[1].data.usage).toHaveProperty('totalTokens', 1500);
       expect(resultCall[2]).toEqual(mockJob.data.meta);
+    });
+
+    test('должен передать параметр lang как language в workflow inputs', async () => {
+      // Добавляем lang в данные задачи
+      mockJob.data.lang = 'en';
+
+      jest.spyOn(OrganizationService, 'getKbIdsOrThrow').mockResolvedValue({
+        adminKbId: 'admin-kb-123',
+        historyKbId: 'history-kb-456',
+      });
+
+      difyApi.retrieveChunks
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      difyApi.runWorkflow.mockResolvedValue({
+        text: 'Answer in English',
+        metadata: {
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+          },
+        },
+      });
+
+      await fastLaneWorker(mockJob);
+
+      // Проверяем, что language передан в workflow inputs
+      expect(difyApi.runWorkflow).toHaveBeenCalledTimes(1);
+      const workflowCall = difyApi.runWorkflow.mock.calls[0];
+      expect(workflowCall[1]).toHaveProperty('language', 'en');
+    });
+
+    test('должен передать undefined для language, если lang не передан', async () => {
+      // Убеждаемся, что lang отсутствует
+      delete mockJob.data.lang;
+
+      jest.spyOn(OrganizationService, 'getKbIdsOrThrow').mockResolvedValue({
+        adminKbId: 'admin-kb-123',
+        historyKbId: 'history-kb-456',
+      });
+
+      difyApi.retrieveChunks
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      difyApi.runWorkflow.mockResolvedValue({
+        text: 'Answer',
+        metadata: {
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+          },
+        },
+      });
+
+      await fastLaneWorker(mockJob);
+
+      // Проверяем, что language равен undefined
+      expect(difyApi.runWorkflow).toHaveBeenCalledTimes(1);
+      const workflowCall = difyApi.runWorkflow.mock.calls[0];
+      expect(workflowCall[1]).toHaveProperty('language', undefined);
     });
 
     test('должен обработать ошибку KbNotFoundError и отправить ошибку в resultQueue', async () => {

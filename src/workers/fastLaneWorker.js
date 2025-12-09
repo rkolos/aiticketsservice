@@ -8,6 +8,7 @@ const config = require('../config');
 const tokenCounter = require('../utils/tokenCounter');
 const historyFormatter = require('../utils/historyFormatter');
 const BillingService = require('../services/BillingService');
+const llmParser = require('../utils/llmParser');
 
 /**
  * Сборка контекста из чанков в структурированную строку Markdown
@@ -287,7 +288,7 @@ function pruneHistory(history, modelName, historyLimit, jobId) {
  * @returns {Promise<void>}
  */
 async function handleGenResponse(job) {
-  const { orgId, query, history, meta = {} } = job.data;
+  const { orgId, query, history, lang, meta = {} } = job.data;
 
   logger.info('CMD_GEN_RESPONSE: Starting retrieval', {
     jobId: job.id,
@@ -445,6 +446,7 @@ async function handleGenResponse(job) {
       query,
       history: prunedHistoryResult.history,
       context: prunedContextResult.context,
+      language: lang, // Передаем значение (или undefined)
     };
 
     // Получаем ответ от Dify Workflow
@@ -603,6 +605,295 @@ async function handleGenResponse(job) {
 }
 
 /**
+ * Обработчик задачи CMD_ANALYZE_NEW_TICKET
+ * Анализ нового тикета: классификация и определение настроения
+ * @param {Job} job - Задача из BullMQ
+ * @returns {Promise<void>}
+ */
+async function handleAnalyzeNewTicket(job) {
+  const { text, targetLanguage = 'ru', meta = {} } = job.data;
+
+  logger.info('CMD_ANALYZE_NEW_TICKET: Starting analysis', {
+    jobId: job.id,
+    textLength: text?.length,
+    targetLanguage,
+  });
+
+  try {
+    const classifierKey = config.dify.keys.classifier;
+    if (!classifierKey) {
+      throw new Error('Dify classifier key is not configured');
+    }
+
+    // Вызов Workflow Classifier
+    const workflowInputs = {
+      message: text,
+      language: targetLanguage,
+    };
+
+    const workflowOutputs = await difyApi.runWorkflow(
+      classifierKey,
+      workflowInputs,
+      meta.user || 'system'
+    );
+
+    // Парсинг JSON ответа
+    let jsonText = workflowOutputs.text || workflowOutputs.output || workflowOutputs.answer || '';
+
+    // Очистка от Markdown оберток
+    const cleanedJson = llmParser.cleanLlmJson(jsonText);
+    const parsed = JSON.parse(cleanedJson);
+
+    // Валидация полей
+    if (!parsed.title || typeof parsed.title !== 'string') {
+      throw new Error('Invalid response: missing or invalid title field');
+    }
+
+    if (!parsed.sentiment || typeof parsed.sentiment !== 'string') {
+      throw new Error('Invalid response: missing or invalid sentiment field');
+    }
+
+    // Валидация значения sentiment
+    const validSentiments = ['positive', 'neutral', 'negative'];
+    if (!validSentiments.includes(parsed.sentiment.toLowerCase())) {
+      logger.warn('CMD_ANALYZE_NEW_TICKET: Invalid sentiment value', {
+        jobId: job.id,
+        sentiment: parsed.sentiment,
+      });
+    }
+
+    const result = {
+      success: true,
+      data: {
+        title: parsed.title,
+        sentiment: parsed.sentiment.toLowerCase(),
+      },
+    };
+
+    await sendResult('CMD_ANALYZE_NEW_TICKET', result, meta);
+
+    logger.info('CMD_ANALYZE_NEW_TICKET: Analysis completed', {
+      jobId: job.id,
+      title: parsed.title,
+      sentiment: parsed.sentiment,
+    });
+  } catch (error) {
+    logger.error('CMD_ANALYZE_NEW_TICKET: Error', {
+      jobId: job.id,
+      error: error.message,
+      stack: error.stack,
+    });
+
+    await sendResult('CMD_ANALYZE_NEW_TICKET', createErrorPayload(error, meta), meta);
+    throw error;
+  }
+}
+
+/**
+ * Обработчик задачи CMD_TRANSLATE
+ * Перевод текста на целевой язык
+ * @param {Job} job - Задача из BullMQ
+ * @returns {Promise<void>}
+ */
+async function handleTranslate(job) {
+  const { text, targetLang, meta = {} } = job.data;
+
+  logger.info('CMD_TRANSLATE: Starting translation', {
+    jobId: job.id,
+    textLength: text?.length,
+    targetLang,
+  });
+
+  try {
+    // Используем classifier ключ для перевода (можно использовать отдельный ключ, если есть)
+    const workflowKey = config.dify.keys.classifier;
+    if (!workflowKey) {
+      throw new Error('Dify workflow key is not configured');
+    }
+
+    // Простой промпт для перевода
+    const workflowInputs = {
+      message: `Переведи следующий текст на язык ${targetLang}: ${text}`,
+      language: targetLang,
+    };
+
+    const workflowOutputs = await difyApi.runWorkflow(
+      workflowKey,
+      workflowInputs,
+      meta.user || 'system'
+    );
+
+    const translatedText =
+      workflowOutputs.text || workflowOutputs.output || workflowOutputs.answer || text;
+
+    const result = {
+      success: true,
+      data: {
+        text: translatedText,
+      },
+    };
+
+    await sendResult('CMD_TRANSLATE', result, meta);
+
+    logger.info('CMD_TRANSLATE: Translation completed', {
+      jobId: job.id,
+      originalLength: text?.length,
+      translatedLength: translatedText.length,
+    });
+  } catch (error) {
+    logger.error('CMD_TRANSLATE: Error', {
+      jobId: job.id,
+      error: error.message,
+      stack: error.stack,
+    });
+
+    await sendResult('CMD_TRANSLATE', createErrorPayload(error, meta), meta);
+    throw error;
+  }
+}
+
+/**
+ * Обработчик задачи CMD_KB_LIST_FILES
+ * Получение списка файлов из базы знаний организации
+ * @param {Job} job - Задача из BullMQ
+ * @returns {Promise<void>}
+ */
+async function handleKbListFiles(job) {
+  const { orgId, meta = {} } = job.data;
+
+  logger.info('CMD_KB_LIST_FILES: Starting', {
+    jobId: job.id,
+    orgId,
+  });
+
+  try {
+    const adminKey = config.dify.keys.admin;
+    if (!adminKey) {
+      throw new Error('Dify admin key is not configured');
+    }
+
+    let adminKbId;
+    try {
+      const kbIds = await OrganizationService.getKbIdsOrThrow(orgId);
+      adminKbId = kbIds.adminKbId;
+    } catch (error) {
+      // Если база не найдена, возвращаем пустой массив (это нормально, база еще не создана)
+      if (error instanceof KbNotFoundError) {
+        logger.info('CMD_KB_LIST_FILES: Knowledge base not found, returning empty list', {
+          jobId: job.id,
+          orgId,
+        });
+
+        const result = {
+          success: true,
+          data: [],
+        };
+
+        await sendResult('CMD_KB_LIST_FILES', result, meta);
+        return;
+      }
+      throw error;
+    }
+
+    // Получение списка документов
+    const documentsResponse = await difyApi.listDocuments(adminKey, adminKbId, 1, 100);
+
+    const files = (documentsResponse.data || []).map((doc) => ({
+      id: doc.id,
+      name: doc.name,
+      created_at: doc.created_at,
+      updated_at: doc.updated_at,
+      word_count: doc.word_count || 0,
+      status: doc.indexing_status || 'unknown',
+    }));
+
+    const result = {
+      success: true,
+      data: files,
+    };
+
+    await sendResult('CMD_KB_LIST_FILES', result, meta);
+
+    logger.info('CMD_KB_LIST_FILES: Completed', {
+      jobId: job.id,
+      orgId,
+      filesCount: files.length,
+    });
+  } catch (error) {
+    logger.error('CMD_KB_LIST_FILES: Error', {
+      jobId: job.id,
+      orgId,
+      error: error.message,
+      stack: error.stack,
+    });
+
+    await handleDifyResourceError(error, orgId);
+
+    await sendResult('CMD_KB_LIST_FILES', createErrorPayload(error, meta), meta);
+    throw error;
+  }
+}
+
+/**
+ * Обработчик задачи CMD_KB_DELETE_FILE
+ * Удаление файла из базы знаний организации
+ * @param {Job} job - Задача из BullMQ
+ * @returns {Promise<void>}
+ */
+async function handleKbDeleteFile(job) {
+  const { orgId, fileId, meta = {} } = job.data;
+
+  logger.info('CMD_KB_DELETE_FILE: Starting', {
+    jobId: job.id,
+    orgId,
+    fileId,
+  });
+
+  try {
+    const adminKey = config.dify.keys.admin;
+    if (!adminKey) {
+      throw new Error('Dify admin key is not configured');
+    }
+
+    // Получение adminKbId
+    const kbIds = await OrganizationService.getKbIdsOrThrow(orgId);
+    const adminKbId = kbIds.adminKbId;
+
+    // Удаление документа
+    await difyApi.deleteDocument(adminKey, adminKbId, fileId);
+
+    const result = {
+      success: true,
+      data: {
+        deleted: true,
+        fileId,
+      },
+    };
+
+    await sendResult('CMD_KB_DELETE_FILE', result, meta);
+
+    logger.info('CMD_KB_DELETE_FILE: File deleted', {
+      jobId: job.id,
+      orgId,
+      fileId,
+    });
+  } catch (error) {
+    logger.error('CMD_KB_DELETE_FILE: Error', {
+      jobId: job.id,
+      orgId,
+      fileId,
+      error: error.message,
+      stack: error.stack,
+    });
+
+    await handleDifyResourceError(error, orgId);
+
+    await sendResult('CMD_KB_DELETE_FILE', createErrorPayload(error, meta), meta);
+    throw error;
+  }
+}
+
+/**
  * Fast Lane Worker - маршрутизация задач
  * @param {Job} job - Задача из BullMQ
  * @returns {Promise<any>} Результат выполнения задачи
@@ -619,30 +910,17 @@ async function fastLaneWorker(job) {
     case 'CMD_GEN_RESPONSE':
       return await handleGenResponse(job);
 
-    // Заглушки для будущих этапов
     case 'CMD_ANALYZE_NEW_TICKET':
-      logger.warn('CMD_ANALYZE_NEW_TICKET: Not implemented yet', {
-        jobId: job.id,
-      });
-      return { status: 'not_implemented', jobId: job.id };
+      return await handleAnalyzeNewTicket(job);
 
     case 'CMD_TRANSLATE':
-      logger.warn('CMD_TRANSLATE: Not implemented yet', {
-        jobId: job.id,
-      });
-      return { status: 'not_implemented', jobId: job.id };
+      return await handleTranslate(job);
 
     case 'CMD_KB_LIST_FILES':
-      logger.warn('CMD_KB_LIST_FILES: Not implemented yet', {
-        jobId: job.id,
-      });
-      return { status: 'not_implemented', jobId: job.id };
+      return await handleKbListFiles(job);
 
     case 'CMD_KB_DELETE_FILE':
-      logger.warn('CMD_KB_DELETE_FILE: Not implemented yet', {
-        jobId: job.id,
-      });
-      return { status: 'not_implemented', jobId: job.id };
+      return await handleKbDeleteFile(job);
 
     default:
       logger.warn('Unknown job name', {
