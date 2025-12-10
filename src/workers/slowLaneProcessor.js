@@ -295,7 +295,7 @@ async function handleArchiveTicket(job) {
     // Извлечение usage через BillingService
     const workflowResponse = summarizeResult;
 
-    const usage = BillingService.extractUsage(workflowResponse, config.model.name);
+    const usage = BillingService.extractUsage(workflowResponse);
 
     logger.info('CMD_ARCHIVE_TICKET: Summarization usage extracted', {
       orgId,
@@ -303,7 +303,7 @@ async function handleArchiveTicket(job) {
       promptTokens: usage.prompt_tokens,
       completionTokens: usage.completion_tokens,
       totalTokens: usage.total_tokens,
-      model: usage.model,
+      ...(usage.model && { model: usage.model }),
     });
 
     // 4) Индексация в History KB
@@ -412,7 +412,7 @@ async function handleArchiveTicket(job) {
           promptTokens: totalUsage.prompt_tokens,
           completionTokens: totalUsage.completion_tokens,
           totalTokens: totalUsage.total_tokens,
-          model: totalUsage.model,
+          ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
           stages: totalUsage.stages,
           indexingTokens,
           wordCount,

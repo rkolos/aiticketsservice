@@ -560,7 +560,7 @@ async function simplifyUserQuery(query, userId = 'system') {
     // Извлекаем usage через BillingService
     const BillingService = require('../services/BillingService');
     const config = require('../config');
-    const usage = BillingService.extractUsage(response, config.model.name);
+    const usage = BillingService.extractUsage(response);
 
     logger.info('Query simplification completed', {
       originalLength: query.length,

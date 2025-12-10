@@ -74,35 +74,36 @@ async function handleTranslate(job) {
                           '';
 
     // Извлечение usage через BillingService
-    const usage = BillingService.extractUsage(result, config.model.name);
+    const usage = BillingService.extractUsage(result);
 
-    logger.info('CMD_TRANSLATE: Translation completed', {
-      jobId: job.id,
-      originalLength: text?.length || 0,
-      translatedLength: translatedText?.length || 0,
+  logger.info('CMD_TRANSLATE: Translation completed', {
+    jobId: job.id,
+    originalLength: text?.length || 0,
+    translatedLength: translatedText?.length || 0,
+    targetLang: inputs.lang,
+    usage: {
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens,
+      ...(usage.model && { model: usage.model }),
+    },
+  });
+
+  const responseResult = {
+    success: true,
+    data: {
+      original: text,
+      translated: translatedText,
       targetLang: inputs.lang,
       usage: {
         promptTokens: usage.prompt_tokens,
         completionTokens: usage.completion_tokens,
         totalTokens: usage.total_tokens,
+        ...(usage.model && { model: usage.model }),
+        stages: [usage], // Единичный этап для этой операции
       },
-    });
-
-    const responseResult = {
-      success: true,
-      data: {
-        original: text,
-        translated: translatedText,
-        targetLang: inputs.lang,
-        usage: {
-          promptTokens: usage.prompt_tokens,
-          completionTokens: usage.completion_tokens,
-          totalTokens: usage.total_tokens,
-          model: usage.model,
-          stages: [usage], // Единичный этап для этой операции
-        },
-      },
-    };
+    },
+  };
 
     await sendResult('CMD_TRANSLATE', responseResult, meta);
   } catch (error) {

@@ -3,10 +3,9 @@ const logger = require('../utils/logger');
 /**
  * Извлечение и нормализация данных о потреблении ресурсов из ответа Dify
  * @param {Object} difyResponse - Полный JSON-ответ от Dify API
- * @param {string} defaultModel - Название модели по умолчанию (fallback)
  * @returns {Object} Объект с данными о токенах: { prompt_tokens, completion_tokens, total_tokens, model }
  */
-function extractUsage(difyResponse, defaultModel = 'gpt-4') {
+function extractUsage(difyResponse) {
   // Обработка null и undefined
   if (!difyResponse || typeof difyResponse !== 'object') {
     logger.warn('extractUsage: invalid response, returning zero usage', {
@@ -16,12 +15,12 @@ function extractUsage(difyResponse, defaultModel = 'gpt-4') {
       prompt_tokens: 0,
       completion_tokens: 0,
       total_tokens: 0,
-      model: defaultModel,
+      model: null,
     };
   }
 
   let usage = null;
-  let modelName = defaultModel;
+  let modelName = null;
 
   // Поиск usage в разных местах ответа Dify
   // 1. Стандартный путь для Chatflow
@@ -77,7 +76,7 @@ function extractUsage(difyResponse, defaultModel = 'gpt-4') {
     prompt_tokens: Number(promptTokens) || 0,
     completion_tokens: Number(completionTokens) || 0,
     total_tokens: Number(totalTokens) || 0,
-    model: modelName || defaultModel,
+    model: modelName || null, // null если Dify не вернул модель
   };
 }
 
@@ -101,7 +100,7 @@ function accumulateUsage(usages) {
     prompt_tokens: 0,
     completion_tokens: 0,
     total_tokens: 0,
-    model: usages[0]?.model || 'unknown',
+    model: usages.find(u => u?.model)?.model || null, // Первая не-null модель или null
     stages: [],
   };
 

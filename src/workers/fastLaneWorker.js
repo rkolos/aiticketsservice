@@ -566,7 +566,7 @@ async function handleGenResponse(job) {
     }
 
     // Шаг 6: Extract Usage - извлечение usage через BillingService
-    const generationUsage = BillingService.extractUsage(workflowOutputs, config.model.name);
+    const generationUsage = BillingService.extractUsage(workflowOutputs);
 
     logger.info('CMD_GEN_RESPONSE: Generation usage extracted', {
       jobId: job.id,
@@ -574,20 +574,23 @@ async function handleGenResponse(job) {
       promptTokens: generationUsage.prompt_tokens,
       completionTokens: generationUsage.completion_tokens,
       totalTokens: generationUsage.total_tokens,
-      model: generationUsage.model,
+      ...(generationUsage.model && { model: generationUsage.model }),
     });
 
     // Шаг 7: Accumulate Usage - суммирование токенов из всех этапов
     const totalUsage = BillingService.accumulateUsage([simplificationUsage, generationUsage]);
 
-    logger.info('CMD_GEN_RESPONSE: Total usage accumulated', {
+    const logData = {
       jobId: job.id,
       orgId,
       promptTokens: totalUsage.prompt_tokens,
       completionTokens: totalUsage.completion_tokens,
       totalTokens: totalUsage.total_tokens,
       stages: totalUsage.stages.length,
-    });
+    };
+    if (totalUsage.model) logData.model = totalUsage.model;
+
+    logger.info('CMD_GEN_RESPONSE: Total usage accumulated', logData);
 
     // Шаг 7: Extract text and sources - извлечение текста ответа и источников
     // Структура ответа Dify Workflow может варьироваться
@@ -653,7 +656,7 @@ async function handleGenResponse(job) {
           promptTokens: totalUsage.prompt_tokens,
           completionTokens: totalUsage.completion_tokens,
           totalTokens: totalUsage.total_tokens,
-          model: totalUsage.model,
+          ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
           stages: totalUsage.stages,
         },
         retrievedContext: retrievedRecords, // Возвращаем сырые данные контекста
@@ -680,7 +683,7 @@ async function handleGenResponse(job) {
 
     await sendResult('CMD_GEN_RESPONSE', result, meta);
 
-    logger.info('CMD_GEN_RESPONSE: Final result sent to result queue', {
+    const finalLogData = {
       jobId: job.id,
       orgId,
       textLength: text.length,
@@ -691,7 +694,10 @@ async function handleGenResponse(job) {
         totalTokens: totalUsage.total_tokens,
         stagesCount: totalUsage.stages.length,
       },
-    });
+    };
+    if (totalUsage.model) finalLogData.usage.model = totalUsage.model;
+
+    logger.info('CMD_GEN_RESPONSE: Final result sent to result queue', finalLogData);
 }
 
 /**
@@ -735,14 +741,14 @@ async function handleAnalyzeNewTicket(job) {
     // Извлечение usage через BillingService
     const workflowResponse = workflowOutputs;
 
-    const usage = BillingService.extractUsage(workflowResponse, config.model.name);
+    const usage = BillingService.extractUsage(workflowResponse);
 
     logger.info('CMD_ANALYZE_NEW_TICKET: Usage extracted', {
       jobId: job.id,
       promptTokens: usage.prompt_tokens,
       completionTokens: usage.completion_tokens,
       totalTokens: usage.total_tokens,
-      model: usage.model,
+      ...(usage.model && { model: usage.model }),
     });
 
     // Парсинг JSON ответа: учитываем разные расположения outputs
@@ -797,7 +803,7 @@ async function handleAnalyzeNewTicket(job) {
           promptTokens: usage.prompt_tokens,
           completionTokens: usage.completion_tokens,
           totalTokens: usage.total_tokens,
-          model: usage.model,
+          ...(usage.model && { model: usage.model }),
           stages: [usage], // Единичный этап для этой операции
         },
       },
@@ -847,7 +853,7 @@ async function handleTranslate(job) {
   const translatedText = result.answer || result.data?.answer || '';
 
   // Извлечение usage через BillingService
-  const usage = BillingService.extractUsage(result, config.model.name);
+  const usage = BillingService.extractUsage(result);
 
   logger.info('CMD_TRANSLATE: Translation completed', {
     jobId: job.id,
@@ -858,6 +864,7 @@ async function handleTranslate(job) {
       promptTokens: usage.prompt_tokens,
       completionTokens: usage.completion_tokens,
       totalTokens: usage.total_tokens,
+      ...(usage.model && { model: usage.model }),
     },
   });
 
@@ -871,7 +878,7 @@ async function handleTranslate(job) {
         promptTokens: usage.prompt_tokens,
         completionTokens: usage.completion_tokens,
         totalTokens: usage.total_tokens,
-        model: usage.model,
+        ...(usage.model && { model: usage.model }),
         stages: [usage], // Единичный этап для этой операции
       },
     },
