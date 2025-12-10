@@ -60,7 +60,8 @@ async function runWorkflow(apiKey, inputs, user) {
       }
     );
 
-    return response.data.outputs || response.data;
+    // Return full response data to preserve metadata with usage information
+    return response.data;
   } catch (error) {
     logger.error('Error running workflow', { error: error.message });
     throw error;
@@ -554,13 +555,15 @@ async function simplifyUserQuery(query, userId = 'system') {
 
     const response = await runWorkflow(config.dify.keys.querySimplifier, inputs, userId);
 
+
     // Извлекаем результат из workflow ответа
-    const simplifiedQuery = response?.data?.outputs?.text || response?.text || query;
+    const simplifiedQuery = response?.outputs?.text || response?.text || query;
 
     // Извлекаем usage через BillingService
     const BillingService = require('../services/BillingService');
     const config = require('../config');
     const usage = BillingService.extractUsage(response);
+
 
 
     logger.info('Query simplification completed', {
@@ -592,7 +595,7 @@ async function simplifyUserQuery(query, userId = 'system') {
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
-        model: 'error',
+        model: null,
       },
     };
   }

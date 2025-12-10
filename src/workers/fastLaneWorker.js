@@ -656,24 +656,6 @@ async function handleGenResponse(job) {
           stages: totalUsage.stages,
         },
         retrievedContext: retrievedRecords, // Возвращаем сырые данные контекста
-        context: prunedContextResult.context,
-        history: prunedHistoryResult.history,
-        query,
-        orgId,
-        tokenCounts: {
-          context: prunedContextResult.pruningInfo.prunedTokens,
-          history: prunedHistoryResult.pruningInfo.prunedTokens,
-          query: tokenCounts.query,
-          total:
-            prunedContextResult.pruningInfo.prunedTokens +
-            prunedHistoryResult.pruningInfo.prunedTokens +
-            tokenCounts.query +
-            tokenCounts.systemPrompt,
-        },
-        pruningInfo: {
-          context: prunedContextResult.pruningInfo,
-          history: prunedHistoryResult.pruningInfo,
-        },
       },
     };
 

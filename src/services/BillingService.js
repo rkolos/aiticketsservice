@@ -35,6 +35,14 @@ function extractUsage(difyResponse) {
   else if (difyResponse.usage) {
     usage = difyResponse.usage;
   }
+  // 4. Для workflow ответов - проверяем metadata самого ответа
+  else if (difyResponse.metadata && typeof difyResponse.metadata === 'object') {
+    // Workflow может возвращать usage данные прямо в metadata
+    if (difyResponse.metadata.prompt_tokens !== undefined || difyResponse.metadata.completion_tokens !== undefined) {
+      usage = difyResponse.metadata;
+    }
+  }
+
 
   // Поиск названия модели
   if (difyResponse.metadata && difyResponse.metadata.model_name) {
@@ -88,10 +96,7 @@ function extractUsage(difyResponse) {
 function accumulateUsage(usages) {
   if (!Array.isArray(usages) || usages.length === 0) {
     return {
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      total_tokens: 0,
-      model: 'unknown',
+      model: null,
       stages: [],
     };
   }
@@ -103,10 +108,18 @@ function accumulateUsage(usages) {
 
   for (const usage of usages) {
     if (usage && typeof usage === 'object') {
-      // Сохраняем информацию о каждом этапе (убираем total_tokens как избыточный)
+      const promptTokens = Number(usage.prompt_tokens) || 0;
+      const completionTokens = Number(usage.completion_tokens) || 0;
+
+      // Пропускаем этапы с нулевыми токенами (например, если workflow не возвращает usage)
+      if (promptTokens === 0 && completionTokens === 0) {
+        continue;
+      }
+
+      // Сохраняем информацию о каждом этапе
       result.stages.push({
-        prompt_tokens: Number(usage.prompt_tokens) || 0,
-        completion_tokens: Number(usage.completion_tokens) || 0,
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
         ...(usage.model && { model: usage.model }), // Включаем модель только если известна
       });
     }
