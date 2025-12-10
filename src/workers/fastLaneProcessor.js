@@ -2,6 +2,7 @@ const logger = require('../utils/logger');
 const config = require('../config');
 const difyApi = require('../infrastructure/dify/api');
 const { sendResult } = require('../infrastructure/bullmq/resultQueue');
+const BillingService = require('../services/BillingService');
 
 /**
  * Процессор для Fast Lane (интерактивные задачи)
@@ -72,21 +73,33 @@ async function handleTranslate(job) {
                           result.data?.result ||
                           '';
 
+    // Извлечение usage через BillingService
+    const usage = BillingService.extractUsage(result, config.model.name);
+
     logger.info('CMD_TRANSLATE: Translation completed', {
       jobId: job.id,
       originalLength: text?.length || 0,
       translatedLength: translatedText?.length || 0,
       targetLang: inputs.lang,
+      usage: {
+        promptTokens: usage.prompt_tokens,
+        completionTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens,
+      },
     });
 
     const responseResult = {
       success: true,
       data: {
-        original: inputs.text,
+        original: text,
         translated: translatedText,
         targetLang: inputs.lang,
-        // Включаем метаданные использования, если они доступны
-        usage: result.data?.usage || null,
+        usage: {
+          promptTokens: usage.prompt_tokens,
+          completionTokens: usage.completion_tokens,
+          totalTokens: usage.total_tokens,
+          model: usage.model,
+        },
       },
     };
 

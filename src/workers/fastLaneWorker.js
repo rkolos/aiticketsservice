@@ -720,6 +720,19 @@ async function handleAnalyzeNewTicket(job) {
       raw: workflowOutputs,
     });
 
+    // Извлечение usage через BillingService
+    const workflowResponse = workflowOutputs;
+
+    const usage = BillingService.extractUsage(workflowResponse, config.model.name);
+
+    logger.info('CMD_ANALYZE_NEW_TICKET: Usage extracted', {
+      jobId: job.id,
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens,
+      model: usage.model,
+    });
+
     // Парсинг JSON ответа: учитываем разные расположения outputs
     const outputs =
       workflowOutputs.outputs ||
@@ -768,6 +781,12 @@ async function handleAnalyzeNewTicket(job) {
       data: {
         title: parsed.title,
         sentiment: parsed.sentiment.toLowerCase(),
+        usage: {
+          promptTokens: usage.prompt_tokens,
+          completionTokens: usage.completion_tokens,
+          totalTokens: usage.total_tokens,
+          model: usage.model,
+        },
       },
     };
 
@@ -814,21 +833,33 @@ async function handleTranslate(job) {
   // sendChatMessage возвращает результат в answer
   const translatedText = result.answer || result.data?.answer || '';
 
+  // Извлечение usage через BillingService
+  const usage = BillingService.extractUsage(result, config.model.name);
+
   logger.info('CMD_TRANSLATE: Translation completed', {
     jobId: job.id,
     originalLength: text?.length || 0,
     translatedLength: translatedText?.length || 0,
     targetLang: inputs.lang,
+    usage: {
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens,
+    },
   });
 
   const responseResult = {
     success: true,
     data: {
-      original: inputs.text,
+      original: text,
       translated: translatedText,
       targetLang: inputs.lang,
-      // Включаем метаданные использования, если они доступны
-      usage: result.data?.usage || null,
+      usage: {
+        promptTokens: usage.prompt_tokens,
+        completionTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens,
+        model: usage.model,
+      },
     },
   };
 

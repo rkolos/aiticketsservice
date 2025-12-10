@@ -7,6 +7,7 @@ const createSafeProcessor = require('../utils/safeProcessor');
 const ErrorHandler = require('../utils/errorHandler');
 const { sendResult } = require('../infrastructure/bullmq/resultQueue');
 const { formatTicketHistory } = require('../utils/historyFormatter');
+const BillingService = require('../services/BillingService');
 
 /**
  * Процессор для Slow Lane (фоновые задачи)
@@ -209,6 +210,20 @@ async function handleArchiveTicket(job) {
       throw new Error('Summarizer returned empty result');
     }
 
+    // Извлечение usage через BillingService
+    const workflowResponse = summarizeResult;
+
+    const usage = BillingService.extractUsage(workflowResponse, config.model.name);
+
+    logger.info('CMD_ARCHIVE_TICKET: Summarization usage extracted', {
+      orgId,
+      ticketId: meta.ticketId || job.id,
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens,
+      model: usage.model,
+    });
+
     // 4) Индексация в History KB
     const ticketId = meta.ticketId || job.id;
     const docName = `Ticket #${ticketId}`;
@@ -233,6 +248,12 @@ async function handleArchiveTicket(job) {
         docName,
         summary: summaryText,
         orgId,
+        usage: {
+          promptTokens: usage.prompt_tokens,
+          completionTokens: usage.completion_tokens,
+          totalTokens: usage.total_tokens,
+          model: usage.model,
+        },
       },
       meta: {
         jobId: job.id,
