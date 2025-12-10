@@ -253,6 +253,7 @@ async function handleArchiveTicket(job) {
           completionTokens: usage.completion_tokens,
           totalTokens: usage.total_tokens,
           model: usage.model,
+          stages: [usage], // Единичный этап для этой операции
         },
       },
       meta: {

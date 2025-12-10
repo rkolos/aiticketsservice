@@ -81,6 +81,50 @@ function extractUsage(difyResponse, defaultModel = 'gpt-4') {
   };
 }
 
+/**
+ * Суммирует usage данные из нескольких LLM вызовов
+ * @param {Array} usages - Массив объектов usage { prompt_tokens, completion_tokens, total_tokens, model }
+ * @returns {Object} Суммарный usage объект
+ */
+function accumulateUsage(usages) {
+  if (!Array.isArray(usages) || usages.length === 0) {
+    return {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      model: 'unknown',
+      stages: [],
+    };
+  }
+
+  const result = {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+    model: usages[0]?.model || 'unknown',
+    stages: [],
+  };
+
+  for (const usage of usages) {
+    if (usage && typeof usage === 'object') {
+      result.prompt_tokens += Number(usage.prompt_tokens) || 0;
+      result.completion_tokens += Number(usage.completion_tokens) || 0;
+      result.total_tokens += Number(usage.total_tokens) || 0;
+
+      // Сохраняем информацию о каждом этапе
+      result.stages.push({
+        prompt_tokens: Number(usage.prompt_tokens) || 0,
+        completion_tokens: Number(usage.completion_tokens) || 0,
+        total_tokens: Number(usage.total_tokens) || 0,
+        model: usage.model || 'unknown',
+      });
+    }
+  }
+
+  return result;
+}
+
 module.exports = {
   extractUsage,
+  accumulateUsage,
 };

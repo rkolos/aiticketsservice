@@ -295,7 +295,10 @@ async function handleGenResponse(job) {
   });
 
   // Шаг 0: Query Simplification - упрощение запроса для улучшения RAG поиска
-  const processedQuery = await difyApi.simplifyUserQuery(query, orgId);
+  const simplificationResult = await difyApi.simplifyUserQuery(query, orgId);
+  const processedQuery = simplificationResult.query;
+  const simplificationUsage = simplificationResult.usage;
+
   logger.info('CMD_GEN_RESPONSE: Query simplified', {
     jobId: job.id,
     orgId,
@@ -303,6 +306,11 @@ async function handleGenResponse(job) {
     processedLength: processedQuery.length,
     originalQuery: query.substring(0, 50),
     processedQuery: processedQuery.substring(0, 50),
+    simplificationUsage: {
+      promptTokens: simplificationUsage.prompt_tokens,
+      completionTokens: simplificationUsage.completion_tokens,
+      totalTokens: simplificationUsage.total_tokens,
+    },
   });
 
     // Шаг 1: Identify Datasets - получение ID баз знаний
@@ -558,25 +566,27 @@ async function handleGenResponse(job) {
     }
 
     // Шаг 6: Extract Usage - извлечение usage через BillingService
-    // runWorkflow возвращает outputs, но extractUsage может искать usage в разных местах
-    // Структурируем ответ для extractUsage (он ищет в metadata.usage, data.outputs.usage, или usage)
-    const workflowResponse = {
-      data: {
-        outputs: workflowOutputs,
-      },
-      metadata: workflowOutputs.metadata || {},
-      usage: workflowOutputs.usage || null,
-    };
+    const generationUsage = BillingService.extractUsage(workflowOutputs, config.model.name);
 
-    const usage = BillingService.extractUsage(workflowResponse, config.model.name);
-
-    logger.info('CMD_GEN_RESPONSE: Usage extracted', {
+    logger.info('CMD_GEN_RESPONSE: Generation usage extracted', {
       jobId: job.id,
       orgId,
-      promptTokens: usage.prompt_tokens,
-      completionTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens,
-      model: usage.model,
+      promptTokens: generationUsage.prompt_tokens,
+      completionTokens: generationUsage.completion_tokens,
+      totalTokens: generationUsage.total_tokens,
+      model: generationUsage.model,
+    });
+
+    // Шаг 7: Accumulate Usage - суммирование токенов из всех этапов
+    const totalUsage = BillingService.accumulateUsage([simplificationUsage, generationUsage]);
+
+    logger.info('CMD_GEN_RESPONSE: Total usage accumulated', {
+      jobId: job.id,
+      orgId,
+      promptTokens: totalUsage.prompt_tokens,
+      completionTokens: totalUsage.completion_tokens,
+      totalTokens: totalUsage.total_tokens,
+      stages: totalUsage.stages.length,
     });
 
     // Шаг 7: Extract text and sources - извлечение текста ответа и источников
@@ -640,10 +650,11 @@ async function handleGenResponse(job) {
         text,
         sources: finalSources,
         usage: {
-          promptTokens: usage.prompt_tokens,
-          completionTokens: usage.completion_tokens,
-          totalTokens: usage.total_tokens,
-          model: usage.model,
+          promptTokens: totalUsage.prompt_tokens,
+          completionTokens: totalUsage.completion_tokens,
+          totalTokens: totalUsage.total_tokens,
+          model: totalUsage.model,
+          stages: totalUsage.stages,
         },
         retrievedContext: retrievedRecords, // Возвращаем сырые данные контекста
         context: prunedContextResult.context,
@@ -675,9 +686,10 @@ async function handleGenResponse(job) {
       textLength: text.length,
       sourcesCount: finalSources.length,
       usage: {
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        totalTokens: usage.total_tokens,
+        promptTokens: totalUsage.prompt_tokens,
+        completionTokens: totalUsage.completion_tokens,
+        totalTokens: totalUsage.total_tokens,
+        stagesCount: totalUsage.stages.length,
       },
     });
 }
@@ -786,6 +798,7 @@ async function handleAnalyzeNewTicket(job) {
           completionTokens: usage.completion_tokens,
           totalTokens: usage.total_tokens,
           model: usage.model,
+          stages: [usage], // Единичный этап для этой операции
         },
       },
     };
@@ -859,6 +872,7 @@ async function handleTranslate(job) {
         completionTokens: usage.completion_tokens,
         totalTokens: usage.total_tokens,
         model: usage.model,
+        stages: [usage], // Единичный этап для этой операции
       },
     },
   };

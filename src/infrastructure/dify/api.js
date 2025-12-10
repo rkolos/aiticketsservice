@@ -502,20 +502,42 @@ async function simplifyUserQuery(query, userId = 'system') {
     // Извлекаем результат из workflow ответа
     const simplifiedQuery = response?.data?.outputs?.text || response?.text || query;
 
+    // Извлекаем usage через BillingService
+    const BillingService = require('../../services/BillingService');
+    const usage = BillingService.extractUsage(response, 'gpt-4'); // Default model
+
     logger.info('Query simplification completed', {
       originalLength: query.length,
       simplifiedLength: simplifiedQuery.length,
       originalQuery: query.substring(0, 50),
       simplifiedQuery: simplifiedQuery.substring(0, 50),
+      usage: {
+        promptTokens: usage.prompt_tokens,
+        completionTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens,
+      },
     });
 
-    return simplifiedQuery.trim();
+    // Возвращаем объект с query и usage
+    return {
+      query: simplifiedQuery.trim(),
+      usage: usage,
+    };
   } catch (error) {
     logger.warn('Query simplification failed, using original query', {
       error: error.message,
       originalQuery: query.substring(0, 50),
     });
-    return query; // Fallback к оригинальному запросу
+    // При ошибке возвращаем оригинальный query без usage
+    return {
+      query: query,
+      usage: {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        model: 'error',
+      },
+    };
   }
 }
 
