@@ -355,6 +355,61 @@ async function listDocuments(apiKey, datasetId, page = 1, limit = 20) {
 }
 
 /**
+ * Получить статус batch операции индексации
+ * @param {string} apiKey - Admin API ключ
+ * @param {string} batchId - ID batch операции
+ * @returns {Promise<Object>} Статус batch операции
+ */
+async function getBatchStatus(apiKey, batchId) {
+  try {
+    const response = await difyClient.get(`/datasets/batch/${batchId}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+
+    logger.info('getBatchStatus: full API response', {
+      batchId,
+      response: response.data,
+    });
+
+    return response.data;
+  } catch (error) {
+    logger.error('Error getting batch status', {
+      batchId,
+      error: error.message,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Получить детальную информацию о документе
+ * @param {string} apiKey - Admin API ключ
+ * @param {string} datasetId - ID датасета
+ * @param {string} documentId - ID документа
+ * @returns {Promise<Object>} Детальная информация о документе
+ */
+async function getDocument(apiKey, datasetId, documentId) {
+  try {
+    const response = await difyClient.get(`/datasets/${datasetId}/documents/${documentId}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+
+    return response.data;
+  } catch (error) {
+    logger.error('Error getting document', {
+      datasetId,
+      documentId,
+      error: error.message,
+    });
+    throw error;
+  }
+}
+
+/**
  * Удалить документ из датасета
  * @param {string} apiKey - Admin API ключ
  * @param {string} datasetId - ID датасета
@@ -554,7 +609,9 @@ module.exports = {
   createDocumentByText,
   uploadFile,
   listDocuments,
+  getDocument,
   deleteDocument,
+  getBatchStatus,
   retrieveChunks,
   retrieve,
 };

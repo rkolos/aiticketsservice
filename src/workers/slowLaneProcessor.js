@@ -75,21 +75,103 @@ async function handleKbAddFile(job) {
 
     // 3) Upload to Dify
     const uploadResult = await difyApi.uploadFile(adminKey, adminKbId, stream, fileName, 'system', size);
+    const documentId = uploadResult?.document_id || uploadResult?.id;
+
     logger.info('File uploaded to Dify', {
       orgId,
       fileName,
       adminKbId,
       status: uploadResult?.status,
-      documentId: uploadResult?.document_id || uploadResult?.id,
+      documentId,
     });
+
+    // 4) Try to get document info and indexing tokens
+    let indexingTokens = null;
+    let wordCount = null;
+
+    try {
+      // Wait for indexing to complete (with retries)
+      const maxRetries = 10;
+      const retryDelay = 2000; // 2 seconds
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+
+        const documentInfo = await difyApi.getDocument(adminKey, adminKbId, documentId);
+        const status = documentInfo?.indexing_status;
+
+        if (status === 'completed') {
+          indexingTokens = documentInfo?.tokens || null;
+          wordCount = documentInfo?.word_count || null;
+
+          logger.info('Document indexing completed', {
+            orgId,
+            documentId,
+            indexingTokens,
+            wordCount,
+            attempts: attempt,
+            indexingStatus: status,
+          });
+          break;
+        } else if (status === 'error' || status === 'failed') {
+          logger.warn('Document indexing failed', {
+            orgId,
+            documentId,
+            indexingStatus: status,
+            attempt,
+          });
+          break;
+        } else {
+          logger.info('Document still indexing', {
+            orgId,
+            documentId,
+            indexingStatus: status,
+            attempt,
+            maxRetries,
+          });
+        }
+      }
+
+      // If still null after all retries, log warning
+      if (indexingTokens === null) {
+        logger.warn('Document indexing tokens not available after all retries', {
+          orgId,
+          documentId,
+        });
+      }
+    } catch (error) {
+      logger.warn('Could not retrieve document indexing info', {
+        orgId,
+        documentId,
+        error: error.message,
+      });
+    }
+
+    // Create usage info for file upload including indexing tokens
+    const fileUsage = indexingTokens ? {
+      promptTokens: 0, // Upload tokens are minimal
+      completionTokens: indexingTokens, // Indexing tokens
+      totalTokens: indexingTokens,
+      model: 'file-indexing',
+      stages: [{
+        prompt_tokens: 0,
+        completion_tokens: indexingTokens,
+        total_tokens: indexingTokens,
+        model: 'file-indexing',
+        type: 'indexing'
+      }],
+    } : null;
 
     const payload = {
       status: 'success',
       data: {
-        fileId: uploadResult?.document_id || uploadResult?.id,
+        fileId: documentId,
         status: uploadResult?.status || 'indexing',
         fileName,
         orgId,
+        indexingTokens,
+        wordCount,
+        usage: fileUsage,
       },
       meta: {
         jobId: job.id,
@@ -234,26 +316,106 @@ async function handleArchiveTicket(job) {
       summaryText
     );
 
+
+    const docId = createResult?.document?.id || createResult?.document_id || createResult?.id || createResult?.task_id;
+
     logger.info('Ticket archived to History KB', {
       orgId,
       historyKbId,
       ticketId,
-      docId: createResult?.document_id || createResult?.id,
+      docId,
     });
+
+    // 5) Try to get document indexing tokens
+    let indexingTokens = null;
+    let wordCount = null;
+
+    try {
+      // Wait for indexing to complete (with retries)
+      const maxRetries = 8;
+      const retryDelay = 1000; // 1 second for archive (usually faster)
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+
+        const documentInfo = await difyApi.getDocument(adminKey, historyKbId, docId);
+        const status = documentInfo?.indexing_status;
+
+        if (status === 'completed') {
+          indexingTokens = documentInfo?.tokens || null;
+          wordCount = documentInfo?.word_count || null;
+
+          logger.info('Archive document indexing completed', {
+            orgId,
+            docId,
+            indexingTokens,
+            wordCount,
+            attempts: attempt,
+            indexingStatus: status,
+          });
+          break;
+        } else if (status === 'error' || status === 'failed') {
+          logger.warn('Archive document indexing failed', {
+            orgId,
+            docId,
+            indexingStatus: status,
+            attempt,
+          });
+          break;
+        } else {
+          logger.debug('Archive document still indexing', {
+            orgId,
+            docId,
+            indexingStatus: status,
+            attempt,
+            maxRetries,
+          });
+        }
+      }
+
+      // If still null after all retries, log warning
+      if (indexingTokens === null) {
+        logger.warn('Archive document indexing tokens not available after all retries', {
+          orgId,
+          docId,
+        });
+      }
+    } catch (error) {
+      logger.warn('Could not retrieve archive document indexing info', {
+        orgId,
+        docId,
+        error: error.message,
+      });
+    }
+
+    // Accumulate total usage including summarization and indexing
+    const indexingUsage = indexingTokens ? {
+      prompt_tokens: 0, // Indexing tokens are completion-like
+      completion_tokens: indexingTokens,
+      total_tokens: indexingTokens,
+      model: 'indexing-model',
+      type: 'indexing'
+    } : null;
+
+    const totalUsage = BillingService.accumulateUsage(
+      indexingUsage ? [usage, indexingUsage] : [usage]
+    );
 
     const payload = {
       status: 'success',
       data: {
-        docId: createResult?.document_id || createResult?.id || createResult?.task_id,
+        docId,
         docName,
         summary: summaryText,
         orgId,
         usage: {
-          promptTokens: usage.prompt_tokens,
-          completionTokens: usage.completion_tokens,
-          totalTokens: usage.total_tokens,
-          model: usage.model,
-          stages: [usage], // Единичный этап для этой операции
+          promptTokens: totalUsage.prompt_tokens,
+          completionTokens: totalUsage.completion_tokens,
+          totalTokens: totalUsage.total_tokens,
+          model: totalUsage.model,
+          stages: totalUsage.stages,
+          indexingTokens,
+          wordCount,
         },
       },
       meta: {
