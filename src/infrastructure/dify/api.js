@@ -2,6 +2,7 @@ const FormData = require('form-data');
 const difyClient = require('./client');
 const { DifyApiError } = require('../../core/errors');
 const logger = require('../../utils/logger');
+const config = require('../../config');
 
 /**
  * Группа 1: Workflow & Chat
@@ -389,10 +390,13 @@ async function deleteDocument(apiKey, datasetId, documentId) {
  */
 async function retrieveChunks(apiKey, datasetId, query, limit = 5) {
   try {
+    // Обрезаем запрос до 250 символов (ограничение Dify API)
+    const trimmedQuery = query.length > 250 ? query.substring(0, 250) : query;
+
     const response = await difyClient.post(
       `/datasets/${datasetId}/retrieve`,
       {
-        query,
+        query: trimmedQuery,
         top_k: limit,
       },
       {
@@ -437,8 +441,11 @@ async function retrieve(datasetId, query, retrievalConfig = {}) {
       score_threshold: 0.5
     };
 
+    // Обрезаем запрос до 250 символов (ограничение Dify API)
+    const trimmedQuery = query.length > 250 ? query.substring(0, 250) : query;
+
     const payload = {
-      query: query,
+      query: trimmedQuery,
       retrieval_model: { ...defaultModel, ...retrievalConfig }
     };
 
@@ -477,5 +484,6 @@ module.exports = {
   listDocuments,
   deleteDocument,
   retrieveChunks,
+  retrieve,
 };
 

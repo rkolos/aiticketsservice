@@ -4,6 +4,383 @@
  * Эмулирует поведение внешнего сервиса (Main App)
  */
 
+/**
+ * Отдельный тест для отладки RAG поиска
+ */
+async function debugRAGTest() {
+  console.log(colorize('\n🔍 DEBUG RAG TEST - Отладка поиска по базе знаний\n', 'cyan'));
+
+  // Используем тот же подход, что и в основном main() - создаем очередь и воркер
+  // Создаем соединение Redis
+  const redisConnection = new Redis({
+    host: config.redis.host,
+    port: config.redis.port,
+    password: config.redis.password || undefined,
+    maxRetriesPerRequest: null,
+    connectTimeout: 5000,
+    retryStrategy: (times) => {
+      if (times > 3) {
+        return null; // Прекратить попытки
+      }
+      return Math.min(times * 200, 2000);
+    },
+  });
+
+  // Создаем очереди
+  const debugEntryQueue = new Queue(QUEUES.ENTRY, { connection: redisConnection });
+
+  // Создаем Map для хранения ожидающих результатов (traceId -> resolve)
+  const debugPendingResults = new Map();
+
+  // Создаем воркер для прослушивания результатов (для отладочного теста)
+  const debugResultsWorker = new Worker(
+    QUEUES.RESULTS,
+    async (job) => {
+      // sendResult отправляет данные в формате: { ...data, meta }
+      // Поэтому job.data содержит и данные результата, и meta
+      const resultData = job.data || {};
+      const traceId = resultData.meta?.traceId;
+
+      // Логируем получение задачи для отладки
+      console.log(
+        colorize(`[${getTime()}]`, 'blue') +
+        colorize(' 🔍 RECEIVED JOB', 'yellow') +
+        ` (${QUEUES.RESULTS}): ${colorize(job.name, 'magenta')} | TraceID: ${traceId ? colorize(traceId.substring(0, 8), 'yellow') : colorize('missing', 'red')}`
+      );
+
+      if (traceId && debugPendingResults.has(traceId)) {
+        const { resolve, jobName, timeoutId } = debugPendingResults.get(traceId);
+        debugPendingResults.delete(traceId);
+        // Очищаем таймаут, если он был установлен
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        // Извлекаем meta из данных и возвращаем остальные данные отдельно
+        const { meta, ...data } = resultData;
+        resolve({ jobName, data, meta });
+      } else {
+        // Логируем, если traceId не найден
+        if (!traceId) {
+          console.log(colorize(`   ⚠️  No traceId in result data`, 'yellow'));
+        } else {
+          console.log(colorize(`   ⚠️  TraceId ${traceId.substring(0, 8)} not found in debugPendingResults`, 'yellow'));
+        }
+      }
+
+      // Возвращаем результат для BullMQ
+      return { processed: true, traceId };
+    },
+    {
+      connection: redisConnection,
+      concurrency: 10,
+    }
+  );
+
+  debugResultsWorker.on('completed', (job) => {
+    // Результат уже обработан в processor
+  });
+
+  debugResultsWorker.on('failed', (job, err) => {
+    console.error(colorize(`❌ Debug Worker error: ${err.message}`, 'red'));
+    if (err.stack) {
+      console.error(colorize(`   Stack: ${err.stack}`, 'red'));
+    }
+  });
+
+  debugResultsWorker.on('error', (err) => {
+    console.error(colorize(`❌ Debug Worker connection error: ${err.message}`, 'red'));
+  });
+
+  debugResultsWorker.on('ready', () => {
+    console.log(colorize(`✓ Debug Results Worker ready and listening on ${QUEUES.RESULTS}`, 'green'));
+  });
+
+  debugResultsWorker.on('active', (job) => {
+    console.log(
+      colorize(`[${getTime()}]`, 'blue') +
+      colorize(' 🔄 Debug Worker processing', 'cyan') +
+      ` (${QUEUES.RESULTS}): ${colorize(job.name, 'magenta')} | JobID: ${colorize(job.id, 'yellow')}`
+    );
+  });
+
+  // Функция для запуска тестов в отладочном режиме
+  async function debugRunTest(testName, jobName, data, validator, timeout = 10000) {
+    const traceId = uuidv4();
+    const randomMeta = {
+      traceId,
+      debugTag: `${jobName}-${Math.random().toString(16).slice(2, 8)}`,
+      nested: { ts: Date.now() },
+      ...(data.meta || {}),
+    };
+    const startTime = Date.now();
+
+    console.log(colorize(`\n--- [${testName}] ---`, 'cyan'));
+
+    // Добавляем traceId в meta
+    const jobData = {
+      ...data,
+      meta: {
+        ...randomMeta,
+      },
+    };
+
+    // Выводим информацию об отправке
+    console.log(
+      colorize(`[${getTime()}]`, 'blue') +
+      colorize(' 📤 SENT', 'bright') +
+      ` (${QUEUES.ENTRY}): ${colorize(jobName, 'magenta')} | TraceID: ${colorize(traceId.substring(0, 8), 'yellow')}`
+    );
+
+    // Создаем Promise для ожидания результата
+    let timeoutId;
+    const resultPromise = new Promise((resolve, reject) => {
+      // Таймаут
+      timeoutId = setTimeout(() => {
+        if (debugPendingResults.has(traceId)) {
+          debugPendingResults.delete(traceId);
+          reject(new Error('TIMEOUT'));
+        }
+      }, timeout);
+
+      debugPendingResults.set(traceId, {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        },
+        jobName,
+        timeoutId,
+        expectedMeta: jobData.meta,
+      });
+    });
+
+    try {
+      // Отправляем задачу
+      await debugEntryQueue.add(jobName, jobData);
+
+      // Ждем результат
+      const result = await resultPromise;
+
+      const duration = Date.now() - startTime;
+      console.log(
+        colorize(`[${getTime()}]`, 'blue') +
+        colorize(' ✅ RECEIVED', 'green') +
+        ` (${QUEUES.RESULTS}): ${colorize(result.jobName, 'magenta')} | Duration: ${colorize(duration + 'ms', 'yellow')}`
+      );
+
+      // Валидируем результат
+      const validationResult = await validator(result.data);
+
+      if (validationResult) {
+        console.log(colorize(`✅ TEST PASSED (${duration}ms)`, 'green'));
+      } else {
+        console.log(colorize(`❌ TEST FAILED (${duration}ms)`, 'red'));
+      }
+
+      return validationResult;
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.log(
+        colorize(`[${getTime()}]`, 'blue') +
+        colorize(' ❌ ERROR', 'red') +
+        ` (${QUEUES.RESULTS}): ${colorize(jobName, 'magenta')} | Duration: ${colorize(duration + 'ms', 'yellow')} | Error: ${error.message}`
+      );
+
+      if (error.message !== 'TIMEOUT') {
+        console.error(colorize(`   Stack: ${error.stack}`, 'red'));
+      }
+
+      return false;
+    }
+  }
+
+  // 1. Загружаем Open WebUI README
+  console.log('1️⃣ Загружаем Open WebUI README...');
+  const test1 = await debugRunTest(
+    'DEBUG: File Upload (Open WebUI README)',
+    'CMD_KB_ADD_FILE',
+    {
+      orgId: 'test-debug-rag',
+      fileUrl: 'https://raw.githubusercontent.com/open-webui/open-webui/main/README.md',
+      fileName: 'open-webui-readme.md',
+      meta: {},
+    },
+    validators.CMD_KB_ADD_FILE,
+    30000 // Увеличенный таймаут для загрузки файла
+  );
+
+  if (!test1) {
+    console.error(colorize('❌ Failed to upload Open WebUI README', 'red'));
+    return;
+  }
+
+  // 2. Загружаем Alpaca WebUI README
+  console.log('2️⃣ Загружаем Alpaca WebUI README...');
+  const test2 = await debugRunTest(
+    'DEBUG: File Upload (Alpaca WebUI README)',
+    'CMD_KB_ADD_FILE',
+    {
+      orgId: 'test-debug-rag',
+      fileUrl: 'https://raw.githubusercontent.com/mmo80/alpaca-webui/main/README.md',
+      fileName: 'alpaca-webui-readme.md',
+      meta: {},
+    },
+    validators.CMD_KB_ADD_FILE,
+    30000 // Увеличенный таймаут для загрузки файла
+  );
+
+  if (!test2) {
+    console.error(colorize('❌ Failed to upload Alpaca WebUI README', 'red'));
+    return;
+  }
+
+  // 3. Ждем индексации (увеличенное время)
+  console.log('3️⃣ Ждем индексации файлов...');
+  await sleep(30000); // Увеличенное время ожидания индексации
+
+  // 4. Синхронизируем кэш
+  console.log('4️⃣ Синхронизируем кэш...');
+  const cacheSync = await debugRunTest(
+    'DEBUG: Sync Cache',
+    'CMD_SYS_RESYNC_CACHE',
+    { meta: {} },
+    validators.CMD_SYS_RESYNC_CACHE,
+    20000 // Увеличенный таймаут для синхронизации
+  );
+
+  if (!cacheSync) {
+    console.log(colorize('⚠️ Cache sync failed, continuing...', 'yellow'));
+  }
+
+  // 5. Проверяем список файлов
+  console.log('5️⃣ Проверяем список файлов...');
+  const fileList = await debugRunTest(
+    'DEBUG: List Files',
+    'CMD_KB_LIST_FILES',
+    {
+      orgId: 'test-debug-rag',
+      meta: {},
+    },
+    (data) => {
+      const result = validators.CMD_KB_LIST_FILES(data);
+      if (result && data.data && Array.isArray(data.data)) {
+        console.log(`   📁 Found ${data.data.length} files:`);
+        data.data.forEach(file => {
+          console.log(`     - ${file.name} (${file.word_count} words, status: ${file.status})`);
+        });
+      }
+      return result;
+    },
+    15000 // Увеличенный таймаут для списка файлов
+  );
+
+  // 6. Тестируем простой поиск по словам из README
+  console.log('6️⃣ Тестируем поиск по слову "Open WebUI"...');
+  const searchTest1 = await debugRunTest(
+    'DEBUG: Search "Open WebUI"',
+    'CMD_GEN_RESPONSE',
+    {
+      orgId: 'test-debug-rag',
+      query: 'What is Open WebUI?',
+      history: 'User: I want to learn about AI tools\nAssistant: I can help you learn about AI tools',
+      lang: 'en',
+      meta: {},
+    },
+    (data) => {
+      const result = validators.CMD_GEN_RESPONSE(data);
+      if (data.data) {
+        console.log(`   📄 Retrieved chunks: ${data.data.retrievedContext?.length || 0}`);
+        if (data.data.retrievedContext && data.data.retrievedContext.length > 0) {
+          console.log('   📝 First chunk preview:', data.data.retrievedContext[0].content?.substring(0, 100) + '...');
+        }
+      }
+      return result;
+    },
+    45000 // Увеличенный таймаут для генерации ответа
+  );
+
+  // 6.5. Тестируем поиск по слову "README"
+  console.log('6.5️⃣ Тестируем поиск по слову "README"...');
+  const searchTest1_5 = await debugRunTest(
+    'DEBUG: Search "README"',
+    'CMD_GEN_RESPONSE',
+    {
+      orgId: 'test-debug-rag',
+      query: 'Tell me about README files',
+      history: 'User: I want to learn about documentation\nAssistant: I can help you with documentation',
+      lang: 'en',
+      meta: {},
+    },
+    (data) => {
+      const result = validators.CMD_GEN_RESPONSE(data);
+      if (data.data) {
+        console.log(`   📄 Retrieved chunks: ${data.data.retrievedContext?.length || 0}`);
+        if (data.data.retrievedContext && data.data.retrievedContext.length > 0) {
+          console.log('   📝 First chunk preview:', data.data.retrievedContext[0].content?.substring(0, 100) + '...');
+        }
+      }
+      return result;
+    },
+    45000 // Увеличенный таймаут для генерации ответа
+  );
+
+  // 7. Тестируем поиск по генерации изображений
+  console.log('7️⃣ Тестируем поиск по генерации изображений...');
+  const searchTest2 = await debugRunTest(
+    'DEBUG: Search "image generation"',
+    'CMD_GEN_RESPONSE',
+    {
+      orgId: 'test-debug-rag',
+      query: 'Tell me about image generation in Open WebUI',
+      history: 'User: I need information about AI tools\nAssistant: What specifically interests you?',
+      lang: 'en',
+      meta: {},
+    },
+    validators.CMD_GEN_RESPONSE,
+    45000 // Увеличенный таймаут для генерации ответа
+  );
+
+  // 8. Тестируем оригинальный вопрос пользователя
+  console.log('8️⃣ Тестируем оригинальный вопрос пользователя...');
+  const originalQuestion = await debugRunTest(
+    'DEBUG: Original User Question',
+    'CMD_GEN_RESPONSE',
+    {
+      orgId: 'test-debug-rag',
+      query: 'Hello! I am trying to decide between installing Alpaca WebUI and Open WebUI, and image generation is very important to me. Could you please clarify if Alpaca WebUI also supports local image engines? Please tell me exactly which models or providers are currently supported for image generation in both Alpaca WebUI and Open WebUI.',
+      history: 'User: I want to compare different WebUI projects\nAssistant: I can help you compare different AI WebUI projects',
+      lang: 'uk',
+      meta: {},
+    },
+    validators.CMD_GEN_RESPONSE,
+    60000 // Большой таймаут для сложного запроса на украинском
+  );
+
+  // 9. Очистка
+  console.log('9️⃣ Очистка тестовых данных...');
+  const cleanup = await debugRunTest(
+    'DEBUG: Cleanup',
+    'CMD_CLEANUP_ORG',
+    {
+      orgId: 'test-debug-rag',
+      meta: {},
+    },
+    validators.CMD_CLEANUP_ORG,
+    20000 // Увеличенный таймаут для очистки
+  );
+
+  console.log(colorize('\n🔍 DEBUG RAG TEST COMPLETED\n', 'green'));
+
+  // Закрываем соединения
+  await debugResultsWorker.close();
+  await debugEntryQueue.close();
+  await redisConnection.quit();
+}
+
 require('dotenv').config({ override: true });
 
 // Для локального запуска скрипта используем localhost, если не указано иное
@@ -283,6 +660,8 @@ const validators = {
     const result = data.success ? data.data : data;
     const hasText = result.text && typeof result.text === 'string' && result.text.length > 0;
     const hasUsage = result.usage && typeof result.usage === 'object';
+    const hasRetrievedContext = 'retrievedContext' in result && Array.isArray(result.retrievedContext);
+
     if (!hasText) {
       console.log('   > Text is empty or missing');
       console.log('   > Raw result:', JSON.stringify(result, null, 2));
@@ -296,7 +675,13 @@ const validators = {
     if (hasUsage && result.usage.totalTokens) {
       console.log(`   > Tokens: ${result.usage.totalTokens}`);
     }
-    return hasText && hasUsage;
+    if (hasRetrievedContext) {
+      console.log(`   > Retrieved chunks: ${result.retrievedContext.length}`);
+    } else {
+      console.log('   > WARNING: retrievedContext field is missing or not an array');
+    }
+
+    return hasText && hasUsage && hasRetrievedContext;
   },
 
   CMD_TRANSLATE: (data) => {
@@ -503,6 +888,27 @@ async function checkDifyApi() {
  * Главная функция
  */
 async function main() {
+  // Проверяем аргументы командной строки
+  const args = process.argv.slice(2);
+
+  if (args.includes('--debug-rag')) {
+    console.log(colorize('🔍 Запуск отладочного теста RAG...', 'bright'));
+    await debugRAGTest();
+    return;
+  }
+
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(colorize('\n📋 Smoke Test Help\n', 'bright'));
+    console.log('Использование: node scripts/smoke-test.js [опции]');
+    console.log('');
+    console.log('Опции:');
+    console.log('  --debug-rag    Запустить только отладочный тест RAG');
+    console.log('  --help, -h     Показать эту справку');
+    console.log('');
+    console.log('По умолчанию запускается полный набор smoke-тестов');
+    return;
+  }
+
   console.log(colorize('\n🚀 Starting E2E Smoke Test...', 'bright'));
   
   // Создаем соединение Redis
@@ -607,15 +1013,15 @@ async function main() {
     testResults.push({ name: 'CMD_TRANSLATE', passed: test2 });
     await sleep(2000);
 
-    // TEST 3: CMD_KB_ADD_FILE (первый файл - LangChain README)
+    // TEST 3: CMD_KB_ADD_FILE (первый файл - Open WebUI README)
     // Загружаем файлы ПЕРЕД генерацией ответа, чтобы использовать их как базу знаний
     const test3 = await runTest(
-      'TEST 3/12: File Upload (LangChain README)',
+      'TEST 3/12: File Upload (Open WebUI README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
-        fileUrl: 'https://raw.githubusercontent.com/langchain-ai/langchain/master/README.md',
-        fileName: 'langchain-readme.md',
+        fileUrl: 'https://raw.githubusercontent.com/open-webui/open-webui/main/README.md',
+        fileName: 'open-webui-readme.md',
         meta: {},
       },
       (data) => {
@@ -632,14 +1038,14 @@ async function main() {
     testResults.push({ name: 'CMD_KB_ADD_FILE (first)', passed: test3 });
     await sleep(2000);
 
-    // TEST 4: CMD_KB_ADD_FILE (второй файл - TypeScript README)
+    // TEST 4: CMD_KB_ADD_FILE (второй файл - Alpaca WebUI README)
     const test4 = await runTest(
-      'TEST 4/12: File Upload (TypeScript README)',
+      'TEST 4/12: File Upload (Alpaca WebUI README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
-        fileUrl: 'https://raw.githubusercontent.com/microsoft/TypeScript/main/README.md',
-        fileName: 'typescript-readme.md',
+        fileUrl: 'https://raw.githubusercontent.com/mmo80/alpaca-webui/main/README.md',
+        fileName: 'alpaca-webui-readme.md',
         meta: {},
       },
       validators.CMD_KB_ADD_FILE,
@@ -667,20 +1073,20 @@ async function main() {
     }
     await sleep(2000);
 
-    // TEST 5: CMD_GEN_RESPONSE - вопрос по содержимому загруженных файлов
+    // TEST 5: CMD_GEN_RESPONSE - вопрос о сравнении WebUI проектов по генерации изображений
     // Теперь файлы загружены и проиндексированы, можно использовать их как базу знаний
     const test5 = await runTest(
-      'TEST 5/12: Generating Response (RAG with uploaded files)',
+      'TEST 5/12: Generating Response (RAG with uploaded files - WebUI comparison)',
       'CMD_GEN_RESPONSE',
       {
         orgId: 'test-org-smoke',
-        query: 'What is LangChain and what are its main features?',
+        query: 'Hello! I am trying to decide between installing Alpaca WebUI and Open WebUI, and image generation is very important to me. I noticed that Open WebUI explicitly mentions support for local generation tools like ComfyUI and AUTOMATIC1111. Could you please clarify if Alpaca WebUI also supports these local image engines? Please tell me exactly which models or providers are currently supported for image generation in both Alpaca WebUI and Open WebUI, so I can compare them.',
         // История в markdown-строке с указанием ролей
         history:
-          'User: I want to learn about AI frameworks\n' +
-          'Assistant: I can help you understand AI frameworks. What would you like to know?\n' +
-          'User: Tell me about LangChain',
-        lang: 'en',
+          'User: I want to compare different WebUI projects\n' +
+          'Assistant: I can help you compare different AI WebUI projects. What aspects are most important to you?\n' +
+          'User: I need information about image generation capabilities',
+        lang: 'uk',
         meta: {},
       },
       validators.CMD_GEN_RESPONSE,

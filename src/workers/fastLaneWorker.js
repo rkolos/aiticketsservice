@@ -311,12 +311,22 @@ async function handleGenResponse(job) {
 
     // Шаг 2: Retrieval - поиск контекста из базы знаний с Hybrid Search и Reranking
     let context = '';
+    let retrievedRecords = []; // Хранилище сырых данных контекста
 
     // Поиск в административной базе знаний с Jina Reranker
     if (adminKbId) {
       try {
         const results = await difyApi.retrieve(adminKbId, query);
+        logger.info(`CMD_GEN_RESPONSE: Retrieve results`, {
+          jobId: job.id,
+          orgId,
+          adminKbId,
+          hasResults: !!results,
+          recordsCount: results?.records?.length || 0,
+          query: query.substring(0, 50),
+        });
         if (results && results.records && results.records.length > 0) {
+          retrievedRecords = results.records; // Сохраняем массив сырых данных
           // Склеиваем сегменты в строку контекста
           context = results.records
             .map(r => r.segment?.content || r.content || '')
@@ -604,6 +614,14 @@ async function handleGenResponse(job) {
     const finalSources = sources.length > 0 ? sources : fallbackSources;
 
     // Шаг 8: Return Result - отправка финального результата в resultQueue
+    logger.info(`CMD_GEN_RESPONSE: Returning result`, {
+      jobId: job.id,
+      orgId,
+      retrievedRecordsCount: retrievedRecords.length,
+      retrievedRecords: retrievedRecords,
+      contextLength: prunedContextResult.context.length,
+    });
+
     const result = {
       success: true,
       data: {
@@ -615,6 +633,7 @@ async function handleGenResponse(job) {
           totalTokens: usage.total_tokens,
           model: usage.model,
         },
+        retrievedContext: retrievedRecords, // Возвращаем сырые данные контекста
         context: prunedContextResult.context,
         history: prunedHistoryResult.history,
         query,
