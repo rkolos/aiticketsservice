@@ -32,6 +32,7 @@ module.exports = {
       summarizer: value.DIFY_KEY_SUMMARIZER,
       responseWorkflow: value.DIFY_KEY_RESPONSE_WORKFLOW,
       translator: value.DIFY_APP_KEY_TRANSLATOR,
+      querySimplifier: value.DIFY_APP_KEY_QUERY_SIMPLIFIER,
     },
     workflow: {
       maxInputVariableSize: parseInt(value.DIFY_WORKFLOW_MAX_INPUT_VARIABLE_SIZE, 10), // В байтах

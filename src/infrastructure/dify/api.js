@@ -485,10 +485,45 @@ async function retrieve(datasetId, query, retrievalConfig = {}) {
   }
 }
 
+/**
+ * Упрощает пользовательский запрос для улучшения RAG поиска
+ * @param {string} query - Оригинальный пользовательский запрос
+ * @param {string} userId - ID пользователя (по умолчанию 'system')
+ * @returns {Promise<string>} Упрощенный поисковый запрос
+ */
+async function simplifyUserQuery(query, userId = 'system') {
+  try {
+    const inputs = {
+      question: query
+    };
+
+    const response = await runWorkflow(config.dify.keys.querySimplifier, inputs, userId);
+
+    // Извлекаем результат из workflow ответа
+    const simplifiedQuery = response?.data?.outputs?.text || response?.text || query;
+
+    logger.info('Query simplification completed', {
+      originalLength: query.length,
+      simplifiedLength: simplifiedQuery.length,
+      originalQuery: query.substring(0, 50),
+      simplifiedQuery: simplifiedQuery.substring(0, 50),
+    });
+
+    return simplifiedQuery.trim();
+  } catch (error) {
+    logger.warn('Query simplification failed, using original query', {
+      error: error.message,
+      originalQuery: query.substring(0, 50),
+    });
+    return query; // Fallback к оригинальному запросу
+  }
+}
+
 module.exports = {
   // Workflow & Chat
   runWorkflow,
   sendChatMessage,
+  simplifyUserQuery,
   // Datasets Management
   listDatasets,
   createDataset,

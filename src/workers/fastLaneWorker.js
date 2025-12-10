@@ -293,6 +293,18 @@ async function handleGenResponse(job) {
     orgId,
     query: query?.substring(0, 50),
   });
+
+  // Шаг 0: Query Simplification - упрощение запроса для улучшения RAG поиска
+  const processedQuery = await difyApi.simplifyUserQuery(query, orgId);
+  logger.info('CMD_GEN_RESPONSE: Query simplified', {
+    jobId: job.id,
+    orgId,
+    originalLength: query.length,
+    processedLength: processedQuery.length,
+    originalQuery: query.substring(0, 50),
+    processedQuery: processedQuery.substring(0, 50),
+  });
+
     // Шаг 1: Identify Datasets - получение ID баз знаний
     // Используем ensureAdminKb и ensureHistoryKb вместо getKbIdsOrThrow,
     // чтобы гарантировать наличие баз знаний (lazy loading)
@@ -316,7 +328,7 @@ async function handleGenResponse(job) {
     // Поиск в административной базе знаний с Jina Reranker
     if (adminKbId) {
       try {
-        const results = await difyApi.retrieve(adminKbId, query);
+        const results = await difyApi.retrieve(adminKbId, processedQuery);
         logger.info(`CMD_GEN_RESPONSE: Retrieve results`, {
           jobId: job.id,
           orgId,
@@ -369,7 +381,7 @@ async function handleGenResponse(job) {
         if (!adminKey) {
           throw new Error('Dify admin key is not configured');
         }
-        historyChunks = await difyApi.retrieveChunks(adminKey, historyKbId, query, 5);
+        historyChunks = await difyApi.retrieveChunks(adminKey, historyKbId, processedQuery, 5);
       } catch (error) {
         logger.warn('CMD_GEN_RESPONSE: Error retrieving history chunks', {
           jobId: job.id,
