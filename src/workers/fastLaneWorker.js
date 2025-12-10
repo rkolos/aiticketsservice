@@ -751,12 +751,12 @@ async function handleAnalyzeNewTicket(job) {
 
 /**
  * Обработчик задачи CMD_TRANSLATE
- * Перевод текста на целевой язык
+ * Перевод текста на целевой язык через специализированный translator workflow
  * @param {Job} job - Задача из BullMQ
  * @returns {Promise<void>}
  */
 async function handleTranslate(job) {
-  const { text, targetLang, meta = {} } = job.data;
+  const { text, targetLang, lang, meta = {} } = job.data;
 
   logger.info('CMD_TRANSLATE: Starting translation', {
     jobId: job.id,
@@ -764,41 +764,44 @@ async function handleTranslate(job) {
     targetLang,
   });
 
-  // Используем classifier ключ для перевода (можно использовать отдельный ключ, если есть)
-  const workflowKey = config.dify.keys.classifier;
-    if (!workflowKey) {
-      throw new Error('Dify workflow key is not configured');
-    }
+  // Используем специализированный translator ключ
+  const workflowKey = config.dify.keys.translator;
+  if (!workflowKey) {
+    throw new Error('Dify translator key is not configured');
+  }
 
-    // Простой промпт для перевода
-    const workflowInputs = {
-      message: `Переведи следующий текст на язык ${targetLang}: ${text}`,
-      language: targetLang,
-    };
+  // Для translator workflow используем sendChatMessage с правильными параметрами
+  // Согласно YAML: query содержит текст для перевода, inputs содержит lang
+  const inputs = {
+    lang: targetLang || lang || 'en'
+  };
 
-    const workflowOutputs = await difyApi.runWorkflow(
-      workflowKey,
-      workflowInputs,
-      meta.user || 'system'
-    );
+  // Вызываем Dify Chat API для перевода
+  const result = await difyApi.sendChatMessage(workflowKey, text, inputs, meta.user || 'system');
 
-    const translatedText =
-      workflowOutputs.text || workflowOutputs.output || workflowOutputs.answer || text;
+  // Извлекаем переведенный текст из результата
+  // sendChatMessage возвращает результат в answer
+  const translatedText = result.answer || result.data?.answer || '';
 
-    const result = {
-      success: true,
-      data: {
-        text: translatedText,
-      },
-    };
+  logger.info('CMD_TRANSLATE: Translation completed', {
+    jobId: job.id,
+    originalLength: text?.length || 0,
+    translatedLength: translatedText?.length || 0,
+    targetLang: inputs.lang,
+  });
 
-    await sendResult('CMD_TRANSLATE', result, meta);
+  const responseResult = {
+    success: true,
+    data: {
+      original: inputs.text,
+      translated: translatedText,
+      targetLang: inputs.lang,
+      // Включаем метаданные использования, если они доступны
+      usage: result.data?.usage || null,
+    },
+  };
 
-    logger.info('CMD_TRANSLATE: Translation completed', {
-      jobId: job.id,
-      originalLength: text?.length,
-      translatedLength: translatedText.length,
-    });
+  await sendResult('CMD_TRANSLATE', responseResult, meta);
 }
 
 /**

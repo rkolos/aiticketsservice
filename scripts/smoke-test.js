@@ -302,16 +302,17 @@ const validators = {
   CMD_TRANSLATE: (data) => {
     if (!data.success && !data.data) return false;
     const result = data.success ? data.data : data;
-    const hasText = result.text && typeof result.text === 'string' && result.text.length > 0;
+    // Проверяем поле translated согласно спецификации
+    const hasTranslated = result.translated && typeof result.translated === 'string' && result.translated.length > 0;
     // Проверяем наличие кириллицы
-    const hasCyrillic = /[а-яё]/i.test(result.text);
-    if (hasText) {
-      console.log(`   > Translated: ${result.text}`);
+    const hasCyrillic = /[а-яё]/i.test(result.translated);
+    if (hasTranslated) {
+      console.log(`   > Translated: ${result.translated}`);
       if (hasCyrillic) {
         console.log(colorize('   > Contains Cyrillic ✓', 'green'));
       }
     }
-    return hasText;
+    return hasTranslated && hasCyrillic;
   },
 
   CMD_KB_ADD_FILE: (data) => {
@@ -595,8 +596,8 @@ async function main() {
       'TEST 2/12: Translation',
       'CMD_TRANSLATE',
       {
-        text: 'Привет мир',
-        targetLang: 'en',
+        text: 'Welcome to the system',
+        targetLang: 'ru',
         meta: {},
       },
       validators.CMD_TRANSLATE,
