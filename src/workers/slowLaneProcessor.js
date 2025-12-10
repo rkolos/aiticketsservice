@@ -159,7 +159,7 @@ async function handleKbAddFile(job) {
     } : null;
 
     const payload = {
-      status: 'success',
+      success: true,
       data: {
         fileId: documentId,
         status: uploadResult?.status || 'indexing',
@@ -207,7 +207,7 @@ async function handleKbAddFile(job) {
         const createResult = await difyApi.createDocumentByText(adminKey, adminKbId, fileName, fileText);
 
         const payload = {
-          status: 'success',
+          success: true,
           data: {
             fileId: createResult?.document_id || createResult?.id || createResult?.task_id,
             status: createResult?.status || 'indexing',
@@ -266,7 +266,7 @@ async function handleArchiveTicket(job) {
       summarizerKey,
       {
         ticket_history: formattedHistory,
-        language: lang, // Передаем значение (или undefined)
+        lang: lang, // Передаем значение (или undefined)
         // Для совместимости с конфигурациями, где message обязательна (ошибка "message is required")
         message: formattedHistory,
       },
@@ -395,7 +395,7 @@ async function handleArchiveTicket(job) {
     const totalUsage = BillingService.accumulateUsage(usageStages);
 
     const payload = {
-      status: 'success',
+      success: true,
       data: {
         docId,
         docName,
@@ -434,7 +434,7 @@ async function handleSysResyncCache(job) {
   try {
     const stats = await OrganizationService.syncCacheWithDify();
     const payload = {
-      status: 'success',
+      success: true,
       data: stats,
       meta: {
         jobId: job.id,
@@ -492,7 +492,7 @@ async function handleCleanupOrg(job) {
     await OrganizationService.invalidateOrgCache(orgId, 'cleanup_org');
 
     const payload = {
-      status: 'success',
+      success: true,
       data: {
         orgId,
         deleted: {

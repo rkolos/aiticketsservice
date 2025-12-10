@@ -695,12 +695,12 @@ async function handleGenResponse(job) {
  * @returns {Promise<void>}
  */
 async function handleAnalyzeNewTicket(job) {
-  const { text, targetLanguage = 'ru', meta = {} } = job.data;
+  const { text, targetLang = 'ru', meta = {} } = job.data;
 
   logger.info('CMD_ANALYZE_NEW_TICKET: Starting analysis', {
     jobId: job.id,
     textLength: text?.length,
-    targetLanguage,
+    targetLang,
   });
 
   const classifierKey = config.dify.keys.classifier;
@@ -711,7 +711,7 @@ async function handleAnalyzeNewTicket(job) {
     // Вызов Workflow Classifier
     const workflowInputs = {
       message: text,
-      lang: targetLanguage, // Исправлено: имя переменной в workflow 'lang', а не 'language'
+      lang: targetLang, // Имя переменной для workflow API
     };
 
     const workflowOutputs = await difyApi.runWorkflow(

@@ -701,7 +701,7 @@ const validators = {
   },
 
   CMD_KB_ADD_FILE: (data) => {
-    if (data.status !== 'success') return false;
+    if (!data.success) return false;
     const hasFileId = data.data?.fileId || data.data?.documentId || data.data?.task_id;
     const hasStatus = data.data?.status;
     if (!hasFileId) {
@@ -716,7 +716,7 @@ const validators = {
   },
 
   CMD_ARCHIVE_TICKET: (data) => {
-    if (data.status !== 'success') return false;
+    if (!data.success) return false;
     // docId может отсутствовать, если API не возвращает идентификатор документа
     const hasDocId = data.data?.docId || data.data?.documentId;
     const hasUsage = data.data?.usage?.stages && Array.isArray(data.data.usage.stages);
@@ -757,7 +757,7 @@ const validators = {
   },
 
   CMD_SYS_RESYNC_CACHE: (data) => {
-    if (data.status !== 'success') return false;
+    if (!data.success) return false;
     const stats = data.data || {};
     const hasStats = typeof stats === 'object' && Object.keys(stats).length > 0;
     if (hasStats) {
@@ -767,7 +767,7 @@ const validators = {
   },
 
   CMD_CLEANUP_ORG: (data) => {
-    if (data.status !== 'success') return false;
+    if (!data.success) return false;
     const hasOrgId = data.data?.orgId && typeof data.data.orgId === 'string';
     const hasDeleted = data.data?.deleted && typeof data.data.deleted === 'object';
     if (hasOrgId) console.log(`   > Org ID: ${data.data.orgId}`);
