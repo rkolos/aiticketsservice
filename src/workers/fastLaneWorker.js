@@ -369,7 +369,7 @@ async function handleGenResponse(job) {
         if (!adminKey) {
           throw new Error('Dify admin key is not configured');
         }
-        historyChunks = await difyApi.retrieveChunks(adminKey, historyKbId, query, 2);
+        historyChunks = await difyApi.retrieveChunks(adminKey, historyKbId, query, 5);
       } catch (error) {
         logger.warn('CMD_GEN_RESPONSE: Error retrieving history chunks', {
           jobId: job.id,

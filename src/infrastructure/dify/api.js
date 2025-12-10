@@ -381,7 +381,7 @@ async function deleteDocument(apiKey, datasetId, documentId) {
 }
 
 /**
- * Поиск релевантных сегментов в базе знаний (External RAG)
+ * Поиск релевантных сегментов в базе знаний с Hybrid Search и Reranking (Q&A оптимизация)
  * @param {string} apiKey - Admin API ключ
  * @param {string} datasetId - ID датасета
  * @param {string} query - Текст запроса
@@ -393,11 +393,26 @@ async function retrieveChunks(apiKey, datasetId, query, limit = 5) {
     // Обрезаем запрос до 250 символов (ограничение Dify API)
     const trimmedQuery = query.length > 250 ? query.substring(0, 250) : query;
 
+    // Конфигурация для Q&A режима с reranking
+    const retrievalModel = {
+      search_method: 'hybrid_search',
+      reranking_enable: true,
+      reranking_mode: 'reranking_model',
+      reranking_model: {
+        reranking_provider_name: 'jina',
+        reranking_model_name: 'jina-reranker-v2-base-multilingual'
+      },
+      weights: 0.7, // Приоритет семантики (0.7) над ключевыми словами
+      top_k: limit,
+      score_threshold_enabled: true,
+      score_threshold: 0.5
+    };
+
     const response = await difyClient.post(
       `/datasets/${datasetId}/retrieve`,
       {
         query: trimmedQuery,
-        top_k: limit,
+        retrieval_model: retrievalModel
       },
       {
         headers: {
@@ -409,7 +424,7 @@ async function retrieveChunks(apiKey, datasetId, query, limit = 5) {
     // Возвращаем массив записей (chunks) с контентом и скором
     return response.data.records || response.data || [];
   } catch (error) {
-    logger.error('Error retrieving chunks', {
+    logger.error('Error retrieving chunks with Q&A optimization', {
       datasetId,
       query: query.substring(0, 50),
       error: error.message,
@@ -436,7 +451,7 @@ async function retrieve(datasetId, query, retrievalConfig = {}) {
         reranking_model_name: 'jina-reranker-v2-base-multilingual'
       },
       weights: 0.7, // Приоритет семантики (0.7) над ключевыми словами
-      top_k: 5,
+      top_k: 7,
       score_threshold_enabled: true,
       score_threshold: 0.5
     };
