@@ -147,16 +147,12 @@ async function handleKbAddFile(job) {
       });
     }
 
-    // Create usage info for file upload including indexing tokens
+    // Prepare usage data for file upload
     const fileUsage = indexingTokens ? {
-      promptTokens: 0, // Upload tokens are minimal
-      completionTokens: indexingTokens, // Indexing tokens
-      totalTokens: indexingTokens,
       model: 'file-indexing',
       stages: [{
         prompt_tokens: 0,
         completion_tokens: indexingTokens,
-        total_tokens: indexingTokens,
         model: 'file-indexing',
         type: 'indexing'
       }],
@@ -169,8 +165,6 @@ async function handleKbAddFile(job) {
         status: uploadResult?.status || 'indexing',
         fileName,
         orgId,
-        indexingTokens,
-        wordCount,
         usage: fileUsage,
       },
       meta: {
@@ -302,7 +296,6 @@ async function handleArchiveTicket(job) {
       ticketId: meta.ticketId || job.id,
       promptTokens: usage.prompt_tokens,
       completionTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens,
       ...(usage.model && { model: usage.model }),
     });
 
@@ -388,18 +381,18 @@ async function handleArchiveTicket(job) {
       });
     }
 
-    // Accumulate total usage including summarization and indexing
-    const indexingUsage = indexingTokens ? {
-      prompt_tokens: 0, // Indexing tokens are completion-like
-      completion_tokens: indexingTokens,
-      total_tokens: indexingTokens,
-      model: 'indexing-model',
-      type: 'indexing'
-    } : null;
+    // Prepare usage data
+    const usageStages = [usage];
+    if (indexingTokens) {
+      usageStages.push({
+        prompt_tokens: 0, // Indexing tokens are completion-like
+        completion_tokens: indexingTokens,
+        model: 'indexing-model',
+        type: 'indexing'
+      });
+    }
 
-    const totalUsage = BillingService.accumulateUsage(
-      indexingUsage ? [usage, indexingUsage] : [usage]
-    );
+    const totalUsage = BillingService.accumulateUsage(usageStages);
 
     const payload = {
       status: 'success',
@@ -409,13 +402,8 @@ async function handleArchiveTicket(job) {
         summary: summaryText,
         orgId,
         usage: {
-          promptTokens: totalUsage.prompt_tokens,
-          completionTokens: totalUsage.completion_tokens,
-          totalTokens: totalUsage.total_tokens,
           ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
           stages: totalUsage.stages,
-          indexingTokens,
-          wordCount,
         },
       },
       meta: {

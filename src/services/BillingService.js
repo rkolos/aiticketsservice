@@ -97,25 +97,17 @@ function accumulateUsage(usages) {
   }
 
   const result = {
-    prompt_tokens: 0,
-    completion_tokens: 0,
-    total_tokens: 0,
     model: usages.find(u => u?.model)?.model || null, // Первая не-null модель или null
     stages: [],
   };
 
   for (const usage of usages) {
     if (usage && typeof usage === 'object') {
-      result.prompt_tokens += Number(usage.prompt_tokens) || 0;
-      result.completion_tokens += Number(usage.completion_tokens) || 0;
-      result.total_tokens += Number(usage.total_tokens) || 0;
-
-      // Сохраняем информацию о каждом этапе
+      // Сохраняем информацию о каждом этапе (убираем total_tokens как избыточный)
       result.stages.push({
         prompt_tokens: Number(usage.prompt_tokens) || 0,
         completion_tokens: Number(usage.completion_tokens) || 0,
-        total_tokens: Number(usage.total_tokens) || 0,
-        model: usage.model || 'unknown',
+        ...(usage.model && { model: usage.model }), // Включаем модель только если известна
       });
     }
   }

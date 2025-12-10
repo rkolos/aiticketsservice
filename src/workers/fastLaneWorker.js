@@ -580,17 +580,11 @@ async function handleGenResponse(job) {
     // Шаг 7: Accumulate Usage - суммирование токенов из всех этапов
     const totalUsage = BillingService.accumulateUsage([simplificationUsage, generationUsage]);
 
-    const logData = {
+    logger.info('CMD_GEN_RESPONSE: Usage stages collected', {
       jobId: job.id,
       orgId,
-      promptTokens: totalUsage.prompt_tokens,
-      completionTokens: totalUsage.completion_tokens,
-      totalTokens: totalUsage.total_tokens,
       stages: totalUsage.stages.length,
-    };
-    if (totalUsage.model) logData.model = totalUsage.model;
-
-    logger.info('CMD_GEN_RESPONSE: Total usage accumulated', logData);
+    });
 
     // Шаг 7: Extract text and sources - извлечение текста ответа и источников
     // Структура ответа Dify Workflow может варьироваться
@@ -653,9 +647,6 @@ async function handleGenResponse(job) {
         text,
         sources: finalSources,
         usage: {
-          promptTokens: totalUsage.prompt_tokens,
-          completionTokens: totalUsage.completion_tokens,
-          totalTokens: totalUsage.total_tokens,
           ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
           stages: totalUsage.stages,
         },
@@ -683,21 +674,13 @@ async function handleGenResponse(job) {
 
     await sendResult('CMD_GEN_RESPONSE', result, meta);
 
-    const finalLogData = {
+    logger.info('CMD_GEN_RESPONSE: Final result sent to result queue', {
       jobId: job.id,
       orgId,
       textLength: text.length,
       sourcesCount: finalSources.length,
-      usage: {
-        promptTokens: totalUsage.prompt_tokens,
-        completionTokens: totalUsage.completion_tokens,
-        totalTokens: totalUsage.total_tokens,
-        stagesCount: totalUsage.stages.length,
-      },
-    };
-    if (totalUsage.model) finalLogData.usage.model = totalUsage.model;
-
-    logger.info('CMD_GEN_RESPONSE: Final result sent to result queue', finalLogData);
+      stagesCount: totalUsage.stages.length,
+    });
 }
 
 /**
@@ -800,11 +783,12 @@ async function handleAnalyzeNewTicket(job) {
         title: parsed.title,
         sentiment: parsed.sentiment.toLowerCase(),
         usage: {
-          promptTokens: usage.prompt_tokens,
-          completionTokens: usage.completion_tokens,
-          totalTokens: usage.total_tokens,
           ...(usage.model && { model: usage.model }),
-          stages: [usage], // Единичный этап для этой операции
+          stages: [{
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            ...(usage.model && { model: usage.model }),
+          }], // Единичный этап для этой операции
         },
       },
     };
@@ -860,12 +844,9 @@ async function handleTranslate(job) {
     originalLength: text?.length || 0,
     translatedLength: translatedText?.length || 0,
     targetLang: inputs.lang,
-    usage: {
-      promptTokens: usage.prompt_tokens,
-      completionTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens,
-      ...(usage.model && { model: usage.model }),
-    },
+    promptTokens: usage.prompt_tokens,
+    completionTokens: usage.completion_tokens,
+    ...(usage.model && { model: usage.model }),
   });
 
   const responseResult = {
@@ -875,11 +856,12 @@ async function handleTranslate(job) {
       translated: translatedText,
       targetLang: inputs.lang,
       usage: {
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        totalTokens: usage.total_tokens,
         ...(usage.model && { model: usage.model }),
-        stages: [usage], // Единичный этап для этой операции
+        stages: [{
+          prompt_tokens: usage.prompt_tokens,
+          completion_tokens: usage.completion_tokens,
+          ...(usage.model && { model: usage.model }),
+        }], // Единичный этап для этой операции
       },
     },
   };

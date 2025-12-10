@@ -81,12 +81,9 @@ async function handleTranslate(job) {
     originalLength: text?.length || 0,
     translatedLength: translatedText?.length || 0,
     targetLang: inputs.lang,
-    usage: {
-      promptTokens: usage.prompt_tokens,
-      completionTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens,
-      ...(usage.model && { model: usage.model }),
-    },
+    promptTokens: usage.prompt_tokens,
+    completionTokens: usage.completion_tokens,
+    ...(usage.model && { model: usage.model }),
   });
 
   const responseResult = {
@@ -96,11 +93,12 @@ async function handleTranslate(job) {
       translated: translatedText,
       targetLang: inputs.lang,
       usage: {
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        totalTokens: usage.total_tokens,
         ...(usage.model && { model: usage.model }),
-        stages: [usage], // Единичный этап для этой операции
+        stages: [{
+          prompt_tokens: usage.prompt_tokens,
+          completion_tokens: usage.completion_tokens,
+          ...(usage.model && { model: usage.model }),
+        }], // Единичный этап для этой операции
       },
     },
   };
