@@ -346,7 +346,12 @@ async function handleGenResponse(job) {
           query: query.substring(0, 50),
         });
         if (results && results.records && results.records.length > 0) {
-          retrievedRecords = results.records; // Сохраняем массив сырых данных
+          // Очищаем retrievedRecords, оставляя только content и score
+          retrievedRecords = results.records.map(record => ({
+            content: record.segment?.content || record.content || '',
+            score: record.score || 0,
+          })).filter(item => item.content.trim().length > 0);
+
           // Склеиваем сегменты в строку контекста
           context = results.records
             .map(r => r.segment?.content || r.content || '')
@@ -645,7 +650,7 @@ async function handleGenResponse(job) {
       success: true,
       data: {
         text,
-        sources: finalSources,
+        ...(finalSources.length > 0 && { sources: finalSources }),
         usage: {
           ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
           stages: totalUsage.stages,

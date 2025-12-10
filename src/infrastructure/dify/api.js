@@ -562,6 +562,7 @@ async function simplifyUserQuery(query, userId = 'system') {
     const config = require('../config');
     const usage = BillingService.extractUsage(response);
 
+
     logger.info('Query simplification completed', {
       originalLength: query.length,
       simplifiedLength: simplifiedQuery.length,

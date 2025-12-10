@@ -399,7 +399,6 @@ async function handleArchiveTicket(job) {
       data: {
         docId,
         docName,
-        summary: summaryText,
         orgId,
         usage: {
           ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна

@@ -717,15 +717,12 @@ const validators = {
 
   CMD_ARCHIVE_TICKET: (data) => {
     if (data.status !== 'success') return false;
-    const hasSummary = data.data?.summary && typeof data.data.summary === 'string';
     // docId может отсутствовать, если API не возвращает идентификатор документа
     const hasDocId = data.data?.docId || data.data?.documentId;
-    if (hasSummary) {
-      const preview = data.data.summary.substring(0, 80);
-      console.log(`   > Summary: ${preview}${data.data.summary.length > 80 ? '...' : ''}`);
-    }
+    const hasUsage = data.data?.usage?.stages && Array.isArray(data.data.usage.stages);
     if (hasDocId) console.log(`   > Doc ID: ${hasDocId}`);
-    return hasSummary;
+    if (hasUsage) console.log(`   > Usage stages: ${data.data.usage.stages.length}`);
+    return hasDocId && hasUsage;
   },
 
   CMD_KB_LIST_FILES: (data) => {
