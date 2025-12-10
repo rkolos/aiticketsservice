@@ -558,8 +558,9 @@ async function simplifyUserQuery(query, userId = 'system') {
     const simplifiedQuery = response?.data?.outputs?.text || response?.text || query;
 
     // Извлекаем usage через BillingService
-    const BillingService = require('../../services/BillingService');
-    const usage = BillingService.extractUsage(response, 'gpt-4'); // Default model
+    const BillingService = require('../services/BillingService');
+    const config = require('../config');
+    const usage = BillingService.extractUsage(response, config.model.name);
 
     logger.info('Query simplification completed', {
       originalLength: query.length,
