@@ -12,6 +12,10 @@ const SUPPORTED_MODELS = [
   'gpt-3.5-turbo-16k',
 ];
 
+// Кэш для энкодера токенов (Singleton паттерн)
+let cachedEncoding = null;
+let cachedModelName = null;
+
 /**
  * Подсчет токенов в тексте
  * @param {string|null|undefined} text - Текст для подсчета
@@ -38,9 +42,22 @@ function countTokens(text, modelName = 'gpt-4') {
   // Используем tiktoken для моделей OpenAI
   if (SUPPORTED_MODELS.includes(modelName)) {
     try {
-      const encoding = encoding_for_model(modelName);
-      const tokens = encoding.encode(text);
-      encoding.free(); // Освобождаем память
+      // Инициализируем или переиспользуем кэшированный энкодер
+      if (cachedEncoding === null || cachedModelName !== modelName) {
+        // Освобождаем предыдущий энкодер, если он был для другой модели
+        if (cachedEncoding !== null) {
+          try {
+            cachedEncoding.free();
+          } catch (error) {
+            logger.warn('Error freeing previous encoding', {
+              error: error.message,
+            });
+          }
+        }
+        cachedEncoding = encoding_for_model(modelName);
+        cachedModelName = modelName;
+      }
+      const tokens = cachedEncoding.encode(text);
       return tokens.length;
     } catch (error) {
       logger.warn('Error using tiktoken, falling back to estimation', {
@@ -104,7 +121,26 @@ function estimateTotalTokens(context, history, query, modelName = 'gpt-4') {
   };
 }
 
+/**
+ * Освобождает ресурсы энкодера токенов
+ * Используется при Graceful Shutdown приложения
+ */
+function cleanup() {
+  if (cachedEncoding !== null) {
+    try {
+      cachedEncoding.free();
+      cachedEncoding = null;
+      cachedModelName = null;
+    } catch (error) {
+      logger.warn('Error freeing encoding during cleanup', {
+        error: error.message,
+      });
+    }
+  }
+}
+
 module.exports = {
   countTokens,
   estimateTotalTokens,
+  cleanup,
 };
