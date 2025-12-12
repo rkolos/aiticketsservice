@@ -126,79 +126,132 @@ function calculateLimits(contextTokens, historyTokens, queryTokens) {
  * @returns {Object} Объект с обрезанными чанками и информацией об обрезке
  */
 function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId) {
-  let prunedAdminChunks = [...adminChunks];
-  let prunedHistoryChunks = [...historyChunks];
-  let prunedContext = assembleContext(prunedAdminChunks, prunedHistoryChunks);
-  let currentTokens = tokenCounter.countTokens(prunedContext, modelName);
+  // Шаг 1: Один раз токенизируем все чанки и сохраняем количество токенов
+  const adminChunksWithTokens = adminChunks.map(chunk => {
+    const content = chunk.content || chunk.text || '';
+    const tokens = tokenCounter.countTokens(content, modelName);
+    return { ...chunk, tokens };
+  });
+
+  const historyChunksWithTokens = historyChunks.map(chunk => {
+    const content = chunk.content || chunk.text || '';
+    const tokens = tokenCounter.countTokens(content, modelName);
+    return { ...chunk, tokens };
+  });
+
+  // Вычисляем токены заголовков и форматирования assembleContext
+  // Заголовки: "## Контекст из базы знаний\n\n### Административная база\n\n" и "\n\n### История тикетов\n\n"
+  const adminHeader = adminChunks.length > 0 ? '## Контекст из базы знаний\n\n### Административная база\n\n' : '';
+  const historyHeader = historyChunks.length > 0 ? '\n\n### История тикетов\n\n' : '';
+  const adminHeaderTokens = adminChunks.length > 0 ? tokenCounter.countTokens(adminHeader, modelName) : 0;
+  const historyHeaderTokens = historyChunks.length > 0 ? tokenCounter.countTokens(historyHeader, modelName) : 0;
+  const headersTokens = adminHeaderTokens + historyHeaderTokens;
+  
+  // Токены разделителей между чанками (пустая строка "\n\n" между каждым чанком)
+  const separatorTokens = tokenCounter.countTokens('\n\n', modelName);
+  const adminSeparatorsTokens = adminChunks.length > 0 ? separatorTokens * (adminChunks.length - 1) : 0;
+  const historySeparatorsTokens = historyChunks.length > 0 ? separatorTokens * (historyChunks.length - 1) : 0;
+
+  // Вычисляем суммарное количество токенов
+  const adminTokensSum = adminChunksWithTokens.reduce((sum, chunk) => sum + chunk.tokens, 0);
+  const historyTokensSum = historyChunksWithTokens.reduce((sum, chunk) => sum + chunk.tokens, 0);
+  let currentTotal = headersTokens + adminTokensSum + adminSeparatorsTokens + historyTokensSum + historySeparatorsTokens;
 
   const pruningInfo = {
     originalAdminChunksCount: adminChunks.length,
     originalHistoryChunksCount: historyChunks.length,
-    originalTokens: currentTokens,
-    prunedAdminChunksCount: prunedAdminChunks.length,
-    prunedHistoryChunksCount: prunedHistoryChunks.length,
-    prunedTokens: currentTokens,
+    originalTokens: currentTotal,
+    prunedAdminChunksCount: adminChunks.length,
+    prunedHistoryChunksCount: historyChunks.length,
+    prunedTokens: currentTotal,
     removedHistoryChunks: 0,
     trimmedAdminChunks: false,
   };
 
   // Если контекст не превышает лимит, возвращаем как есть
-  if (currentTokens <= contextLimit) {
+  if (currentTotal <= contextLimit) {
+    const prunedContext = assembleContext(adminChunks, historyChunks);
     return {
-      adminChunks: prunedAdminChunks,
-      historyChunks: prunedHistoryChunks,
+      adminChunks,
+      historyChunks,
       context: prunedContext,
       pruningInfo,
     };
   }
 
-  // Шаг 1: Обрезаем historyChunks с конца массива
-  while (prunedHistoryChunks.length > 0 && currentTokens > contextLimit) {
-    prunedHistoryChunks.pop();
+  // Шаг 2: Работаем с копиями массивов для обрезки
+  let prunedAdminChunks = adminChunksWithTokens.map(chunk => ({ ...chunk }));
+  let prunedHistoryChunks = historyChunksWithTokens.map(chunk => ({ ...chunk }));
+
+  // Шаг 3: Обрезаем historyChunks с конца массива
+  while (prunedHistoryChunks.length > 0 && currentTotal > contextLimit) {
+    const removedChunk = prunedHistoryChunks.pop();
+    currentTotal -= removedChunk.tokens;
+    // Учитываем удаление разделителя между чанками истории, если остались чанки
+    if (prunedHistoryChunks.length > 0) {
+      currentTotal -= separatorTokens;
+    } else {
+      // Если удалили последний historyChunk, удаляем заголовок истории
+      if (historyChunks.length > 0) {
+        currentTotal -= historyHeaderTokens;
+      }
+    }
     pruningInfo.removedHistoryChunks++;
-    prunedContext = assembleContext(prunedAdminChunks, prunedHistoryChunks);
-    currentTokens = tokenCounter.countTokens(prunedContext, modelName);
   }
 
-  // Шаг 2: Если после удаления всех historyChunks лимит все еще превышен,
+  // Шаг 4: Если после удаления всех historyChunks лимит все еще превышен,
   // обрезаем содержимое отдельных чанков из adminChunks (с конца текста)
-  if (currentTokens > contextLimit && prunedAdminChunks.length > 0) {
+  if (currentTotal > contextLimit && prunedAdminChunks.length > 0) {
     pruningInfo.trimmedAdminChunks = true;
 
     // Обрезаем каждый чанк с конца, пока не уложимся в лимит
-    for (let i = prunedAdminChunks.length - 1; i >= 0 && currentTokens > contextLimit; i--) {
+    for (let i = prunedAdminChunks.length - 1; i >= 0 && currentTotal > contextLimit; i--) {
       const chunk = prunedAdminChunks[i];
       const content = chunk.content || chunk.text || '';
-      const chunkTokens = tokenCounter.countTokens(content, modelName);
 
-      if (chunkTokens === 0) {
+      if (chunk.tokens === 0) {
         continue;
       }
 
       // Вычисляем, сколько токенов нужно обрезать
-      const tokensToRemove = currentTokens - contextLimit;
-      const tokensToKeep = Math.max(0, chunkTokens - tokensToRemove);
+      const tokensToRemove = currentTotal - contextLimit;
+      const tokensToKeep = Math.max(0, chunk.tokens - tokensToRemove);
 
       // Приблизительно вычисляем, сколько символов оставить
       // Консервативная оценка: 1 токен ≈ 4 символа
-      const charsToKeep = Math.floor((tokensToKeep / chunkTokens) * content.length);
+      const charsToKeep = Math.floor((tokensToKeep / chunk.tokens) * content.length);
 
       // Обрезаем чанк
       const trimmedContent = content.substring(0, Math.max(0, charsToKeep));
+      
+      // Пересчитываем токены только для этого одного обрезанного чанка
+      const trimmedTokens = tokenCounter.countTokens(trimmedContent, modelName);
+      
+      // Обновляем текущую сумму токенов
+      currentTotal = currentTotal - chunk.tokens + trimmedTokens;
+      
+      // Обновляем чанк
       prunedAdminChunks[i] = {
         ...chunk,
         content: trimmedContent,
         text: trimmedContent,
+        tokens: trimmedTokens,
       };
-
-      prunedContext = assembleContext(prunedAdminChunks, prunedHistoryChunks);
-      currentTokens = tokenCounter.countTokens(prunedContext, modelName);
     }
   }
 
-  pruningInfo.prunedAdminChunksCount = prunedAdminChunks.length;
-  pruningInfo.prunedHistoryChunksCount = prunedHistoryChunks.length;
-  pruningInfo.prunedTokens = currentTokens;
+  // Шаг 5: Вызываем assembleContext только один раз в самом конце
+  // Преобразуем чанки обратно в исходный формат (убираем поле tokens)
+  const finalAdminChunks = prunedAdminChunks.map(({ tokens, ...chunk }) => chunk);
+  const finalHistoryChunks = prunedHistoryChunks.map(({ tokens, ...chunk }) => chunk);
+  const prunedContext = assembleContext(finalAdminChunks, finalHistoryChunks);
+
+  // Финальная проверка токенов (опционально, для точности)
+  const finalTokens = tokenCounter.countTokens(prunedContext, modelName);
+  
+  pruningInfo.prunedAdminChunksCount = finalAdminChunks.length;
+  pruningInfo.prunedHistoryChunksCount = finalHistoryChunks.length;
+  pruningInfo.prunedTokens = finalTokens;
 
   // Логирование обрезки
   if (pruningInfo.removedHistoryChunks > 0 || pruningInfo.trimmedAdminChunks) {
@@ -214,8 +267,8 @@ function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId
   }
 
   return {
-    adminChunks: prunedAdminChunks,
-    historyChunks: prunedHistoryChunks,
+    adminChunks: finalAdminChunks,
+    historyChunks: finalHistoryChunks,
     context: prunedContext,
     pruningInfo,
   };
