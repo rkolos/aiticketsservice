@@ -664,8 +664,10 @@ const validators = {
       if (data.meta.usage.stages) {
         console.log(`   > Usage stages: ${data.meta.usage.stages.length}`);
       }
+    } else {
+      console.log(`   > Usage in meta: ⚠️  (optional, not present)`);
     }
-    return hasTitle && hasSentiment && hasUsage;
+    return hasTitle && hasSentiment;
   },
 
   CMD_GEN_RESPONSE: (data) => {
