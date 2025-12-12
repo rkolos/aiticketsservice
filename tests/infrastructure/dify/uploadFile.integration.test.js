@@ -30,25 +30,30 @@ console.log('[INTEGRATION TEST] ===== ВСЕ МОДУЛИ ЗАГРУЖЕНЫ ===
 // Это критично, так как при импорте модулей могут создаваться соединения Redis
 afterAll(async () => {
   console.log('[INTEGRATION TEST] Глобальная очистка соединений...');
+  const cleanupPromises = [];
   
   // Закрываем resultQueue и его соединение Redis
   try {
     const resultQueueModule = require('../../../src/infrastructure/bullmq/resultQueue');
-    if (resultQueueModule.resultQueue) {
-      await resultQueueModule.resultQueue.close().catch((err) => {
-        console.warn('[INTEGRATION TEST] Ошибка закрытия resultQueue:', err.message);
-      });
+    if (resultQueueModule.resultQueue && typeof resultQueueModule.resultQueue.close === 'function') {
+      cleanupPromises.push(
+        resultQueueModule.resultQueue.close().catch(() => {})
+      );
     }
     
     // Закрываем соединение Redis напрямую
     if (resultQueueModule.connection) {
       const conn = resultQueueModule.connection;
-      if (typeof conn.quit === 'function') {
-        await conn.quit().catch((err) => {
-          console.warn('[INTEGRATION TEST] Ошибка закрытия connection:', err.message);
-        });
-      } else if (typeof conn.disconnect === 'function') {
-        conn.disconnect();
+      const status = conn.status || conn.connector?.status;
+      // Проверяем статус перед закрытием
+      if (status && status !== 'end' && status !== 'close') {
+        if (typeof conn.quit === 'function') {
+          cleanupPromises.push(conn.quit().catch(() => {}));
+        } else if (typeof conn.disconnect === 'function') {
+          cleanupPromises.push(new Promise((resolve) => {
+            try { conn.disconnect(); resolve(); } catch { resolve(); }
+          }));
+        }
       }
     }
   } catch (e) {
@@ -59,15 +64,23 @@ afterAll(async () => {
   try {
     const redisClient = require('../../../src/infrastructure/redis/client');
     if (redisClient && typeof redisClient.disconnect === 'function') {
-      redisClient.disconnect();
+      const status = redisClient.status || redisClient.connector?.status;
+      // Проверяем статус перед закрытием
+      if (status && status !== 'end' && status !== 'close') {
+        cleanupPromises.push(new Promise((resolve) => {
+          try { redisClient.disconnect(); resolve(); } catch { resolve(); }
+        }));
+      }
     }
   } catch (e) {
     // Игнорируем ошибки импорта
   }
   
-  // Даем время на закрытие соединений (используем unref чтобы не блокировать завершение)
+  await Promise.all(cleanupPromises);
+  
+  // Даем дополнительное время на закрытие соединений (используем unref чтобы не блокировать завершение)
   await new Promise((resolve) => {
-    const timer = setTimeout(resolve, 500);
+    const timer = setTimeout(resolve, 200);
     timer.unref(); // Не блокировать завершение процесса
   });
   

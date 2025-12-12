@@ -90,6 +90,9 @@ describe('Dify API - uploadFile', () => {
           'content-type': 'multipart/form-data; boundary=----WebKitFormBoundary',
           Authorization: `Bearer ${apiKey}`,
         },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        validateStatus: expect.any(Function),
       }
     );
 

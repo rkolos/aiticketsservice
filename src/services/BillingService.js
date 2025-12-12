@@ -3,9 +3,10 @@ const logger = require('../utils/logger');
 /**
  * Извлечение и нормализация данных о потреблении ресурсов из ответа Dify
  * @param {Object} difyResponse - Полный JSON-ответ от Dify API
+ * @param {string} defaultModel - Модель по умолчанию, если модель не найдена в ответе
  * @returns {Object} Объект с данными о токенах: { prompt_tokens, completion_tokens, total_tokens, model }
  */
-function extractUsage(difyResponse) {
+function extractUsage(difyResponse, defaultModel = null) {
   // Обработка null и undefined
   if (!difyResponse || typeof difyResponse !== 'object') {
     logger.warn('extractUsage: invalid response, returning zero usage', {
@@ -15,7 +16,7 @@ function extractUsage(difyResponse) {
       prompt_tokens: 0,
       completion_tokens: 0,
       total_tokens: 0,
-      model: null,
+      model: defaultModel || null,
     };
   }
 
@@ -63,7 +64,7 @@ function extractUsage(difyResponse) {
       prompt_tokens: 0,
       completion_tokens: 0,
       total_tokens: 0,
-      model: modelName,
+      model: modelName || defaultModel || null,
     };
   }
 
@@ -84,7 +85,7 @@ function extractUsage(difyResponse) {
     prompt_tokens: Number(promptTokens) || 0,
     completion_tokens: Number(completionTokens) || 0,
     total_tokens: Number(totalTokens) || 0,
-    model: modelName || null, // null если Dify не вернул модель
+    model: modelName || defaultModel || null, // defaultModel если Dify не вернул модель
   };
 }
 

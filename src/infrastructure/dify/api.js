@@ -251,6 +251,9 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
     const fileOptions = {
       filename: fileName,
     };
+    if (fileSize != null) {
+      fileOptions.knownLength = fileSize;
+    }
     formData.append('file', fileStream, fileOptions);
 
     // Параметры индексации: отправляем только data (как в официальной схеме)
