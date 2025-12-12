@@ -107,13 +107,15 @@ function normalizeError(error) {
 
 /**
  * Создание финального пейлоада ошибки для очереди результатов
+ * @deprecated Используйте formatError из responseFormatter.js для нового формата
  * @param {Error} error - Объект ошибки
  * @param {Object} meta - Метаданные задачи (контекст)
- * @returns {Object} Пейлоад для очереди результатов
+ * @returns {Object} Пейлоад для очереди результатов (старый формат для обратной совместимости)
  */
 function createErrorPayload(error, meta = {}) {
   const normalized = normalizeError(error);
 
+  // Старый формат для обратной совместимости
   return {
     status: 'error',
     errorCode: normalized.errorCode,

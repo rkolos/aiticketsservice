@@ -488,6 +488,57 @@ npm run test:watch
 npm run test:coverage
 ```
 
+### Smoke Tests (E2E)
+
+Smoke тесты проверяют работу всей цепочки обработки задач в реальном окружении:
+
+```bash
+# Запустить все smoke тесты
+npm run test:smoke
+
+# Показать список доступных тестов
+npm run test:smoke -- --list-tests
+
+# Запустить только указанные тесты по номерам
+npm run test:smoke -- --test 1,3,5
+npm run test:smoke -- --test 1-5,10
+
+# Запустить тесты по именам команд
+npm run test:smoke -- --test-name CMD_ANALYZE_NEW_TICKET,CMD_TRANSLATE
+
+# Запустить отладочный тест RAG
+npm run test:smoke -- --debug-rag
+
+# Показать справку
+npm run test:smoke -- --help
+```
+
+**Доступные тесты:**
+1. `CMD_ANALYZE_NEW_TICKET` - Анализ нового тикета
+2. `CMD_TRANSLATE` - Перевод текста
+3. `CMD_KB_ADD_FILE` (first) - Загрузка первого файла
+4. `CMD_KB_ADD_FILE` (second) - Загрузка второго файла
+5. `CMD_GEN_RESPONSE` - Генерация ответа с RAG
+6. `CMD_ARCHIVE_TICKET` - Архивация тикета
+7. `CMD_KB_LIST_FILES` - Список файлов
+8. `CMD_KB_DELETE_FILE` - Удаление файла
+9. `CMD_SYS_RESYNC_CACHE` - Синхронизация кэша
+10. `CMD_UNKNOWN_COMMAND` - Обработка неизвестной команды
+10.5. `CMD_РРРРРРР` - Неизвестная команда с кириллицей
+11. `CMD_CLEANUP_ORG` - Очистка организации
+
+**Примеры использования для отладки:**
+```bash
+# Быстрая проверка только анализа и перевода
+npm run test:smoke -- --test 1,2
+
+# Проверка только RAG функциональности
+npm run test:smoke -- --test 3,4,5
+
+# Проверка только работы с файлами
+npm run test:smoke -- --test-name CMD_KB_ADD_FILE,CMD_KB_LIST_FILES,CMD_KB_DELETE_FILE
+```
+
 ### Development Workflow
 
 **Важно:** После завершения реализации любой задачи обязательно запускайте все тесты проекта:

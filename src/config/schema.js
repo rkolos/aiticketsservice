@@ -3,7 +3,10 @@ const Joi = require('joi');
 const schema = Joi.object({
   // Server/App
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
-  LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug').default('info'),
+  LOG_LEVEL: Joi.string()
+    .valid('error', 'warn', 'info', 'debug', 'ERROR', 'WARN', 'INFO', 'DEBUG')
+    .default('info')
+    .custom((value) => value.toLowerCase()),
   HEALTHCHECK_PORT: Joi.number().default(3000),
 
   // Redis

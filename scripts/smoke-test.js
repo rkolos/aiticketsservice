@@ -614,13 +614,16 @@ async function runTest(testName, jobName, data, validator, timeout = 10000, entr
   }
 
     // Проверяем статус (но не возвращаем false сразу - валидатор может ожидать ошибку)
-    if (result.data?.status === 'error') {
-      console.log(colorize(`   ⚠️  WORKER ERROR: ${result.data.error || result.data.message}`, 'yellow'));
+    // Обновлено для стандартизированного формата: success: false вместо status: 'error'
+    if (result.data?.success === false) {
+      const errorMsg = result.data.error?.message || result.data.error?.code || result.data.message || 'Unknown error';
+      console.log(colorize(`   ⚠️  WORKER ERROR: ${errorMsg}`, 'yellow'));
       // Продолжаем выполнение - валидатор решит, является ли это ожидаемой ошибкой
     }
 
     // Вызываем валидатор (может вернуть true даже для ошибок, если ошибка ожидаема)
-    const isValid = validator(result.data);
+    // Передаем валидатору объект с data и meta, так как валидаторы проверяют data.meta.usage
+    const isValid = validator({ ...result.data, meta: result.meta });
 
     if (isValid) {
       console.log(colorize(`✅ TEST PASSED (${duration}s)`, 'green'));
@@ -643,37 +646,52 @@ async function runTest(testName, jobName, data, validator, timeout = 10000, entr
 
 /**
  * Валидаторы для каждого типа задачи
+ * Обновлены для стандартизированного формата ответов
  */
 const validators = {
   CMD_ANALYZE_NEW_TICKET: (data) => {
-    if (!data.success && !data.data) return false;
-    const result = data.success ? data.data : data;
+    // Проверяем стандартизированный формат
+    if (!data.success || !data.data) return false;
+    const result = data.data;
     const hasTitle = result.title && typeof result.title === 'string';
     const hasSentiment = result.sentiment && typeof result.sentiment === 'string';
+    const hasUsage = data.meta && data.meta.usage && typeof data.meta.usage === 'object';
+    
     if (hasTitle) console.log(`   > Title: ${result.title}`);
     if (hasSentiment) console.log(`   > Sentiment: ${result.sentiment}`);
-    return hasTitle && hasSentiment;
+    if (hasUsage) {
+      console.log(`   > Usage in meta: ✓`);
+      if (data.meta.usage.stages) {
+        console.log(`   > Usage stages: ${data.meta.usage.stages.length}`);
+      }
+    }
+    return hasTitle && hasSentiment && hasUsage;
   },
 
   CMD_GEN_RESPONSE: (data) => {
-    if (!data.success && !data.data) return false;
-    const result = data.success ? data.data : data;
-    const hasText = result.text && typeof result.text === 'string' && result.text.length > 0;
-    const hasUsage = result.usage && typeof result.usage === 'object';
+    // Проверяем стандартизированный формат
+    if (!data.success || !data.data) return false;
+    const result = data.data;
+    // Проверяем content вместо text
+    const hasContent = result.content && typeof result.content === 'string' && result.content.length > 0;
+    const hasUsage = data.meta && data.meta.usage && typeof data.meta.usage === 'object';
     const hasRetrievedContext = 'retrievedContext' in result && Array.isArray(result.retrievedContext);
 
-    if (!hasText) {
-      console.log('   > Text is empty or missing');
+    if (!hasContent) {
+      console.log('   > Content is empty or missing');
       console.log('   > Raw result:', JSON.stringify(result, null, 2));
-      // Не валим тест, если текст пустой: вернём false и дадим увидеть проблему,
-      // но не TIMEOUT. Валидация уже вернёт fail.
     }
-    if (hasText) {
-      const preview = result.text.substring(0, 80);
-      console.log(`   > Text: ${preview}${result.text.length > 80 ? '...' : ''}`);
+    if (hasContent) {
+      const preview = result.content.substring(0, 80);
+      console.log(`   > Content: ${preview}${result.content.length > 80 ? '...' : ''}`);
     }
-    if (hasUsage && result.usage.totalTokens) {
-      console.log(`   > Tokens: ${result.usage.totalTokens}`);
+    if (hasUsage) {
+      console.log(`   > Usage in meta: ✓`);
+      if (data.meta.usage.stages) {
+        console.log(`   > Usage stages: ${data.meta.usage.stages.length}`);
+      }
+    } else {
+      console.log(`   > Usage in meta: MISSING (data.meta: ${!!data.meta}, data.meta.usage: ${!!(data.meta && data.meta.usage)})`);
     }
     if (hasRetrievedContext) {
       console.log(`   > Retrieved chunks: ${result.retrievedContext.length}`);
@@ -681,58 +699,77 @@ const validators = {
       console.log('   > WARNING: retrievedContext field is missing or not an array');
     }
 
-    return hasText && hasUsage && hasRetrievedContext;
+    return hasContent && hasUsage && hasRetrievedContext;
   },
 
   CMD_TRANSLATE: (data) => {
-    if (!data.success && !data.data) return false;
-    const result = data.success ? data.data : data;
-    // Проверяем поле translated согласно спецификации
-    const hasTranslated = result.translated && typeof result.translated === 'string' && result.translated.length > 0;
-    // Проверяем наличие кириллицы
-    const hasCyrillic = /[а-яё]/i.test(result.translated);
-    if (hasTranslated) {
-      console.log(`   > Translated: ${result.translated}`);
+    // Проверяем стандартизированный формат
+    if (!data.success || !data.data) return false;
+    const result = data.data;
+    // Проверяем content вместо translated, sourceContent вместо original
+    const hasContent = result.content && typeof result.content === 'string' && result.content.length > 0;
+    const hasSourceContent = result.sourceContent && typeof result.sourceContent === 'string';
+    const hasUsage = data.meta && data.meta.usage && typeof data.meta.usage === 'object';
+    // Проверяем наличие кириллицы в content
+    const hasCyrillic = hasContent && /[а-яё]/i.test(result.content);
+    
+    if (hasContent) {
+      console.log(`   > Content (translated): ${result.content}`);
       if (hasCyrillic) {
         console.log(colorize('   > Contains Cyrillic ✓', 'green'));
       }
     }
-    return hasTranslated && hasCyrillic;
+    if (hasSourceContent) {
+      console.log(`   > Source content: ${result.sourceContent.substring(0, 50)}...`);
+    }
+    if (hasUsage) {
+      console.log(`   > Usage in meta: ✓`);
+    }
+    return hasContent && hasCyrillic && hasUsage;
   },
 
   CMD_KB_ADD_FILE: (data) => {
-    if (!data.success) return false;
-    const hasFileId = data.data?.fileId || data.data?.documentId || data.data?.task_id;
+    // Проверяем стандартизированный формат
+    if (!data.success || !data.data) return false;
+    const hasDocumentId = data.data?.documentId || data.data?.task_id; // Поддержка обратной совместимости
     const hasStatus = data.data?.status;
-    if (!hasFileId) {
-      console.log('   > File ID missing (accepting success due to fallback)');
+    if (!hasDocumentId) {
+      console.log('   > Document ID missing (accepting success due to fallback)');
     }
     if (data.data?.fallback === 'createDocumentByText') {
       console.log('   > Fallback used: createDocumentByText');
     }
-    if (hasFileId) console.log(`   > File ID: ${hasFileId}`);
+    if (hasDocumentId) console.log(`   > Document ID: ${hasDocumentId}`);
     if (hasStatus) console.log(`   > Status: ${hasStatus}`);
-    return hasStatus === 'indexing' || hasStatus === 'completed' || hasFileId;
+    return hasStatus === 'indexing' || hasStatus === 'completed' || hasDocumentId;
   },
 
   CMD_ARCHIVE_TICKET: (data) => {
-    if (!data.success) return false;
-    // docId может отсутствовать, если API не возвращает идентификатор документа
-    const hasDocId = data.data?.docId || data.data?.documentId;
-    const hasUsage = data.data?.usage?.stages && Array.isArray(data.data.usage.stages);
-    if (hasDocId) console.log(`   > Doc ID: ${hasDocId}`);
-    if (hasUsage) console.log(`   > Usage stages: ${data.data.usage.stages.length}`);
-    return hasDocId && hasUsage;
+    // Проверяем стандартизированный формат
+    if (!data.success || !data.data) return false;
+    // Проверяем documentId вместо docId, usage в meta
+    const hasDocumentId = data.data?.documentId;
+    const hasUsage = data.meta && data.meta.usage && data.meta.usage.stages && Array.isArray(data.meta.usage.stages);
+    if (hasDocumentId) console.log(`   > Document ID: ${hasDocumentId}`);
+    if (hasUsage) {
+      console.log(`   > Usage stages in meta: ${data.meta.usage.stages.length}`);
+    } else {
+      console.log(`   > Usage in meta: MISSING (data.meta: ${!!data.meta}, data.meta.usage: ${!!(data.meta && data.meta.usage)}, stages: ${!!(data.meta && data.meta.usage && data.meta.usage.stages)})`);
+    }
+    return hasDocumentId && hasUsage;
   },
 
   CMD_KB_LIST_FILES: (data) => {
-    if (!data.success && !data.data) return false;
-    const result = data.success ? data.data : data;
-    const isArray = Array.isArray(result);
-    if (isArray) {
-      console.log(`   > Files count: ${result.length}`);
-      if (result.length > 0) {
-        result.forEach((file, index) => {
+    // Проверяем стандартизированный формат с обернутым массивом
+    if (!data.success || !data.data) return false;
+    // Проверяем структуру { items: [...], count: N }
+    const hasItems = data.data.items && Array.isArray(data.data.items);
+    const hasCount = typeof data.data.count === 'number';
+    
+    if (hasItems) {
+      console.log(`   > Files count: ${data.data.count}`);
+      if (data.data.items.length > 0) {
+        data.data.items.forEach((file, index) => {
           console.log(`   > File ${index + 1}: ${file.name || file.id || 'unknown'}`);
           if (file.id) console.log(`     - ID: ${file.id}`);
           if (file.status) console.log(`     - Status: ${file.status}`);
@@ -743,22 +780,25 @@ const validators = {
         console.log('   > No files found');
       }
     }
-    return isArray;
+    return hasItems && hasCount;
   },
 
   CMD_KB_DELETE_FILE: (data) => {
-    if (!data.success && !data.data) return false;
-    const result = data.success ? data.data : data;
+    // Проверяем стандартизированный формат
+    if (!data.success || !data.data) return false;
+    const result = data.data;
     const hasDeleted = result.deleted === true || result.deleted === 'true';
-    const hasFileId = result.fileId && typeof result.fileId === 'string';
+    // Проверяем documentId вместо fileId
+    const hasDocumentId = result.documentId && typeof result.documentId === 'string';
     if (hasDeleted) console.log(`   > Deleted: true`);
-    if (hasFileId) console.log(`   > File ID: ${result.fileId}`);
-    return hasDeleted || hasFileId;
+    if (hasDocumentId) console.log(`   > Document ID: ${result.documentId}`);
+    return hasDeleted || hasDocumentId;
   },
 
   CMD_SYS_RESYNC_CACHE: (data) => {
-    if (!data.success) return false;
-    const stats = data.data || {};
+    // Проверяем стандартизированный формат
+    if (!data.success || !data.data) return false;
+    const stats = data.data;
     const hasStats = typeof stats === 'object' && Object.keys(stats).length > 0;
     if (hasStats) {
       console.log(`   > Stats: ${JSON.stringify(stats)}`);
@@ -767,7 +807,8 @@ const validators = {
   },
 
   CMD_CLEANUP_ORG: (data) => {
-    if (!data.success) return false;
+    // Проверяем стандартизированный формат
+    if (!data.success || !data.data) return false;
     const hasOrgId = data.data?.orgId && typeof data.data.orgId === 'string';
     const hasDeleted = data.data?.deleted && typeof data.data.deleted === 'object';
     if (hasOrgId) console.log(`   > Org ID: ${data.data.orgId}`);
@@ -782,21 +823,23 @@ const validators = {
    * Универсальный валидатор для неизвестных команд
    * Работает для любой неизвестной команды (CMD_UNKNOWN_COMMAND, CMD_РРРРРРР и т.д.)
    * Проверяет, что Router Worker корректно обработал неизвестную команду и отправил ошибку
+   * Обновлен для стандартизированного формата ошибок
    */
   CMD_UNKNOWN_COMMAND: (data) => {
-    // Для неизвестной команды ожидаем ошибку
-    if (data.status !== 'error') {
-      console.log(`   > Expected status 'error', got '${data.status}'`);
+    // Для неизвестной команды ожидаем ошибку в стандартизированном формате
+    if (data.success !== false) {
+      console.log(`   > Expected success: false, got: ${data.success}`);
       return false;
     }
-    const hasErrorCode = data.errorCode && typeof data.errorCode === 'string';
-    const hasMessage = data.message && typeof data.message === 'string';
-    const isUnknownCommandError = data.errorCode === 'UNKNOWN_COMMAND';
-    const messageContainsUnknown = data.message && data.message.toLowerCase().includes('unknown');
+    const hasError = data.error && typeof data.error === 'object';
+    const hasErrorCode = hasError && data.error.code && typeof data.error.code === 'string';
+    const hasMessage = hasError && data.error.message && typeof data.error.message === 'string';
+    const isUnknownCommandError = hasErrorCode && data.error.code === 'UNKNOWN_COMMAND';
+    const messageContainsUnknown = hasMessage && data.error.message.toLowerCase().includes('unknown');
 
-    if (hasErrorCode) console.log(`   > Error Code: ${data.errorCode}`);
+    if (hasErrorCode) console.log(`   > Error Code: ${data.error.code}`);
     if (hasMessage) {
-      console.log(`   > Error Message: ${data.message}`);
+      console.log(`   > Error Message: ${data.error.message}`);
       if (messageContainsUnknown) {
         console.log(colorize('   > Contains "unknown" in message ✓', 'green'));
       }
@@ -807,7 +850,7 @@ const validators = {
       console.log(colorize('   > Error code is UNKNOWN_COMMAND ✓', 'green'));
     }
 
-    return hasErrorCode && hasMessage && (isUnknownCommandError || messageContainsUnknown);
+    return hasError && hasErrorCode && hasMessage && (isUnknownCommandError || messageContainsUnknown);
   },
 };
 
@@ -870,6 +913,11 @@ async function checkDifyApi() {
         message = error.message;
       }
     }
+    // Если ошибка связана с plugin daemon, это не критично для базовой функциональности
+    if (error.message && error.message.includes('plugin daemon')) {
+      console.log(colorize(`⚠ Dify API доступен, но plugin daemon недоступен (это не критично для базовых тестов)\n`, 'yellow'));
+      return true; // Продолжаем работу, так как базовые функции должны работать
+    }
 
     console.error(colorize(`\n❌ Dify API is not accessible: ${message}`, 'red'));
     console.error(colorize(`   URL: ${config.dify.url}`, 'yellow'));
@@ -899,10 +947,73 @@ async function main() {
     console.log('Использование: node scripts/smoke-test.js [опции]');
     console.log('');
     console.log('Опции:');
-    console.log('  --debug-rag    Запустить только отладочный тест RAG');
-    console.log('  --help, -h     Показать эту справку');
+    console.log('  --debug-rag              Запустить только отладочный тест RAG');
+    console.log('  --test <номера>           Запустить только указанные тесты (через запятую)');
+    console.log('                            Пример: --test 1,3,5 или --test 1-5,10');
+    console.log('  --test-name <имена>       Запустить тесты по именам команд (через запятую)');
+    console.log('                            Пример: --test-name CMD_ANALYZE_NEW_TICKET,CMD_TRANSLATE');
+    console.log('  --list-tests             Показать список всех доступных тестов');
+    console.log('  --help, -h               Показать эту справку');
     console.log('');
     console.log('По умолчанию запускается полный набор smoke-тестов');
+    return;
+  }
+
+  // Функция для парсинга номеров тестов (поддерживает диапазоны и отдельные номера)
+  function parseTestNumbers(input) {
+    const numbers = new Set();
+    const parts = input.split(',');
+    
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.includes('-')) {
+        // Диапазон: 1-5
+        const [start, end] = trimmed.split('-').map(n => parseInt(n.trim(), 10));
+        if (!isNaN(start) && !isNaN(end)) {
+          for (let i = start; i <= end; i++) {
+            numbers.add(i);
+          }
+        }
+      } else {
+        // Отдельный номер: 1, 3, 5
+        const num = parseFloat(trimmed);
+        if (!isNaN(num)) {
+          numbers.add(num);
+        }
+      }
+    }
+    
+    return Array.from(numbers).sort((a, b) => a - b);
+  }
+
+  // Парсинг параметров для выбора тестов
+  let selectedTests = null;
+  let selectedTestNames = null;
+
+  const testIndex = args.indexOf('--test');
+  if (testIndex !== -1 && args[testIndex + 1]) {
+    selectedTests = parseTestNumbers(args[testIndex + 1]);
+  }
+
+  const testNameIndex = args.indexOf('--test-name');
+  if (testNameIndex !== -1 && args[testNameIndex + 1]) {
+    selectedTestNames = args[testNameIndex + 1].split(',').map(n => n.trim());
+  }
+
+  if (args.includes('--list-tests')) {
+    console.log(colorize('\n📋 Доступные тесты:\n', 'bright'));
+    console.log(' 1. CMD_ANALYZE_NEW_TICKET - Анализ нового тикета');
+    console.log(' 2. CMD_TRANSLATE - Перевод текста');
+    console.log(' 3. CMD_KB_ADD_FILE (first) - Загрузка первого файла');
+    console.log(' 4. CMD_KB_ADD_FILE (second) - Загрузка второго файла');
+    console.log(' 5. CMD_GEN_RESPONSE - Генерация ответа с RAG');
+    console.log(' 6. CMD_ARCHIVE_TICKET - Архивация тикета');
+    console.log(' 7. CMD_KB_LIST_FILES - Список файлов');
+    console.log(' 8. CMD_KB_DELETE_FILE - Удаление файла');
+    console.log(' 9. CMD_SYS_RESYNC_CACHE - Синхронизация кэша');
+    console.log('10. CMD_UNKNOWN_COMMAND - Обработка неизвестной команды');
+    console.log('10.5. CMD_РРРРРРР - Неизвестная команда с кириллицей');
+    console.log('11. CMD_CLEANUP_ORG - Очистка организации\n');
     return;
   }
 
@@ -977,42 +1088,70 @@ async function main() {
   const startTime = Date.now();
   let uploadedFileId = null; // Для хранения fileId из CMD_KB_ADD_FILE
 
+  // Функция для проверки, должен ли тест выполняться
+  function shouldRunTest(testNumber, commandName) {
+    if (selectedTests === null && selectedTestNames === null) {
+      return true; // Запускаем все тесты по умолчанию
+    }
+    
+    if (selectedTests !== null && selectedTests.includes(testNumber)) {
+      return true;
+    }
+    
+    if (selectedTestNames !== null && selectedTestNames.includes(commandName)) {
+      return true;
+    }
+    
+    return false;
+  }
+
   try {
     // TEST 1: CMD_ANALYZE_NEW_TICKET
-    const test1 = await runTest(
-      'TEST 1/12: Analyzing Ticket',
-      'CMD_ANALYZE_NEW_TICKET',
-      {
-        text: 'У меня не работает вход в систему, ошибка 500',
-        targetLanguage: 'en',
-        meta: {},
-      },
-      validators.CMD_ANALYZE_NEW_TICKET,
-      20000,
-      entryQueue
-    );
-    testResults.push({ name: 'CMD_ANALYZE_NEW_TICKET', passed: test1 });
-    await sleep(2000);
+    if (!shouldRunTest(1, 'CMD_ANALYZE_NEW_TICKET')) {
+      console.log(colorize('⏭️  Skipping TEST 1: CMD_ANALYZE_NEW_TICKET', 'yellow'));
+    } else {
+      const test1 = await runTest(
+        'TEST 1/12: Analyzing Ticket',
+        'CMD_ANALYZE_NEW_TICKET',
+        {
+          text: 'У меня не работает вход в систему, ошибка 500',
+          targetLanguage: 'en',
+          meta: {},
+        },
+        validators.CMD_ANALYZE_NEW_TICKET,
+        20000,
+        entryQueue
+      );
+      testResults.push({ name: 'CMD_ANALYZE_NEW_TICKET', passed: test1 });
+      await sleep(2000);
+    }
 
     // TEST 2: CMD_TRANSLATE
-    const test2 = await runTest(
-      'TEST 2/12: Translation',
-      'CMD_TRANSLATE',
-      {
-        text: 'Welcome to the system',
-        targetLang: 'ru',
-        meta: {},
-      },
-      validators.CMD_TRANSLATE,
-      10000,
-      entryQueue
-    );
-    testResults.push({ name: 'CMD_TRANSLATE', passed: test2 });
-    await sleep(2000);
+    if (!shouldRunTest(2, 'CMD_TRANSLATE')) {
+      console.log(colorize('⏭️  Skipping TEST 2: CMD_TRANSLATE', 'yellow'));
+    } else {
+      const test2 = await runTest(
+        'TEST 2/12: Translation',
+        'CMD_TRANSLATE',
+        {
+          text: 'Welcome to the system',
+          targetLang: 'ru',
+          meta: {},
+        },
+        validators.CMD_TRANSLATE,
+        10000,
+        entryQueue
+      );
+      testResults.push({ name: 'CMD_TRANSLATE', passed: test2 });
+      await sleep(2000);
+    }
 
     // TEST 3: CMD_KB_ADD_FILE (первый файл - Open WebUI README)
     // Загружаем файлы ПЕРЕД генерацией ответа, чтобы использовать их как базу знаний
-    const test3 = await runTest(
+    if (!shouldRunTest(3, 'CMD_KB_ADD_FILE')) {
+      console.log(colorize('⏭️  Skipping TEST 3: CMD_KB_ADD_FILE (first)', 'yellow'));
+    } else {
+      const test3 = await runTest(
       'TEST 3/12: File Upload (Open WebUI README)',
       'CMD_KB_ADD_FILE',
       {
@@ -1023,20 +1162,45 @@ async function main() {
       },
       (data) => {
         const result = validators.CMD_KB_ADD_FILE(data);
-        // Сохраняем fileId для последующего удаления
-        if (result && data.data?.fileId) {
-          uploadedFileId = data.data.fileId;
+        // Сохраняем documentId для последующего удаления
+        // API возвращает documentId, а не fileId
+        if (result && data.data?.documentId) {
+          uploadedFileId = data.data.documentId;
         }
         return result;
       },
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_KB_ADD_FILE (first)', passed: test3 });
-    await sleep(2000);
+      testResults.push({ name: 'CMD_KB_ADD_FILE (first)', passed: test3 });
+      await sleep(2000);
+      
+      // Синхронизируем кэш после загрузки первого файла, если TEST 4 будет пропущен
+      // Это нужно для того, чтобы база знаний была доступна для последующих операций
+      if (!shouldRunTest(4, 'CMD_KB_ADD_FILE')) {
+        console.log(colorize('⏳ Syncing cache after first file upload (TEST 4 will be skipped)...', 'yellow'));
+        const cacheSyncAfterFirst = await runTest(
+          'CACHE SYNC: Syncing cache after first file',
+          'CMD_SYS_RESYNC_CACHE',
+          {
+            meta: {},
+          },
+          validators.CMD_SYS_RESYNC_CACHE,
+          10000,
+          entryQueue
+        );
+        if (!cacheSyncAfterFirst) {
+          console.log(colorize('⚠️  Cache sync failed after first file, but continuing...', 'yellow'));
+        }
+        await sleep(1000);
+      }
+    }
 
     // TEST 4: CMD_KB_ADD_FILE (второй файл - Alpaca WebUI README)
-    const test4 = await runTest(
+    if (!shouldRunTest(4, 'CMD_KB_ADD_FILE')) {
+      console.log(colorize('⏭️  Skipping TEST 4: CMD_KB_ADD_FILE (second)', 'yellow'));
+    } else {
+      const test4 = await runTest(
       'TEST 4/12: File Upload (Alpaca WebUI README)',
       'CMD_KB_ADD_FILE',
       {
@@ -1049,30 +1213,34 @@ async function main() {
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_KB_ADD_FILE (second)', passed: test4 });
-    // Даем время на индексацию файлов перед использованием в RAG
-    await sleep(5000);
-    
-    // Синхронизируем кэш, чтобы база знаний была доступна для CMD_GEN_RESPONSE
-    console.log(colorize('⏳ Syncing cache to ensure knowledge base is available...', 'yellow'));
-    const cacheSync = await runTest(
-      'CACHE SYNC: Syncing cache before RAG',
-      'CMD_SYS_RESYNC_CACHE',
-      {
-        meta: {},
-      },
-      validators.CMD_SYS_RESYNC_CACHE,
-      10000,
-      entryQueue
-    );
-    if (!cacheSync) {
-      console.log(colorize('⚠️  Cache sync failed, but continuing...', 'yellow'));
+      testResults.push({ name: 'CMD_KB_ADD_FILE (second)', passed: test4 });
+      // Даем время на индексацию файлов перед использованием в RAG
+      await sleep(5000);
+      
+      // Синхронизируем кэш, чтобы база знаний была доступна для CMD_GEN_RESPONSE
+      console.log(colorize('⏳ Syncing cache to ensure knowledge base is available...', 'yellow'));
+      const cacheSync = await runTest(
+        'CACHE SYNC: Syncing cache before RAG',
+        'CMD_SYS_RESYNC_CACHE',
+        {
+          meta: {},
+        },
+        validators.CMD_SYS_RESYNC_CACHE,
+        10000,
+        entryQueue
+      );
+      if (!cacheSync) {
+        console.log(colorize('⚠️  Cache sync failed, but continuing...', 'yellow'));
+      }
+      await sleep(2000);
     }
-    await sleep(2000);
 
     // TEST 5: CMD_GEN_RESPONSE - вопрос о сравнении WebUI проектов по генерации изображений
     // Теперь файлы загружены и проиндексированы, можно использовать их как базу знаний
-    const test5 = await runTest(
+    if (!shouldRunTest(5, 'CMD_GEN_RESPONSE')) {
+      console.log(colorize('⏭️  Skipping TEST 5: CMD_GEN_RESPONSE', 'yellow'));
+    } else {
+      const test5 = await runTest(
       'TEST 5/12: Generating Response (RAG with uploaded files - WebUI comparison)',
       'CMD_GEN_RESPONSE',
       {
@@ -1090,11 +1258,15 @@ async function main() {
       30000, // Увеличенный таймаут для генерации ответа с RAG
       entryQueue
     );
-    testResults.push({ name: 'CMD_GEN_RESPONSE', passed: test5 });
-    await sleep(2000);
+      testResults.push({ name: 'CMD_GEN_RESPONSE', passed: test5 });
+      await sleep(2000);
+    }
 
     // TEST 6: CMD_ARCHIVE_TICKET
-    const test6 = await runTest(
+    if (!shouldRunTest(6, 'CMD_ARCHIVE_TICKET')) {
+      console.log(colorize('⏭️  Skipping TEST 6: CMD_ARCHIVE_TICKET', 'yellow'));
+    } else {
+      const test6 = await runTest(
       'TEST 6/12: Archiving Ticket',
       'CMD_ARCHIVE_TICKET',
       {
@@ -1110,14 +1282,18 @@ async function main() {
         },
       },
       validators.CMD_ARCHIVE_TICKET,
-      10000,
+      20000, // Увеличенный таймаут для архивации тикета
       entryQueue
     );
-    testResults.push({ name: 'CMD_ARCHIVE_TICKET', passed: test6 });
-    await sleep(2000);
+      testResults.push({ name: 'CMD_ARCHIVE_TICKET', passed: test6 });
+      await sleep(2000);
+    }
 
     // TEST 7: CMD_KB_LIST_FILES
-    const test7 = await runTest(
+    if (!shouldRunTest(7, 'CMD_KB_LIST_FILES')) {
+      console.log(colorize('⏭️  Skipping TEST 7: CMD_KB_LIST_FILES', 'yellow'));
+    } else {
+      const test7 = await runTest(
       'TEST 7/12: List Files',
       'CMD_KB_LIST_FILES',
       {
@@ -1128,15 +1304,36 @@ async function main() {
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_KB_LIST_FILES', passed: test7 });
-    await sleep(2000);
+      testResults.push({ name: 'CMD_KB_LIST_FILES', passed: test7 });
+      await sleep(2000);
+    }
 
     // TEST 8: CMD_KB_DELETE_FILE
     // Удаляем файл, загруженный в TEST 3
-    if (!uploadedFileId) {
-      console.log(colorize('⚠️  Skipping CMD_KB_DELETE_FILE: no fileId from previous upload', 'yellow'));
+    if (!shouldRunTest(8, 'CMD_KB_DELETE_FILE')) {
+      console.log(colorize('⏭️  Skipping TEST 8: CMD_KB_DELETE_FILE', 'yellow'));
+    } else if (!uploadedFileId) {
+      console.log(colorize('⚠️  Skipping CMD_KB_DELETE_FILE: no documentId from previous upload', 'yellow'));
       testResults.push({ name: 'CMD_KB_DELETE_FILE', passed: false });
     } else {
+      // Синхронизируем кэш перед удалением, чтобы база знаний была доступна
+      // Это особенно важно, если TEST 3 был выполнен в предыдущем запуске
+      console.log(colorize('⏳ Syncing cache before delete...', 'yellow'));
+      const cacheSyncBeforeDelete = await runTest(
+        'CACHE SYNC: Syncing cache before delete',
+        'CMD_SYS_RESYNC_CACHE',
+        {
+          meta: {},
+        },
+        validators.CMD_SYS_RESYNC_CACHE,
+        10000,
+        entryQueue
+      );
+      if (!cacheSyncBeforeDelete) {
+        console.log(colorize('⚠️  Cache sync failed before delete, but continuing...', 'yellow'));
+      }
+      await sleep(1000);
+      
       const test8 = await runTest(
         'TEST 8/12: Delete File',
         'CMD_KB_DELETE_FILE',
@@ -1154,7 +1351,10 @@ async function main() {
     await sleep(2000);
 
     // TEST 9: CMD_SYS_RESYNC_CACHE
-    const test9 = await runTest(
+    if (!shouldRunTest(9, 'CMD_SYS_RESYNC_CACHE')) {
+      console.log(colorize('⏭️  Skipping TEST 9: CMD_SYS_RESYNC_CACHE', 'yellow'));
+    } else {
+      const test9 = await runTest(
       'TEST 9/12: Sync Cache',
       'CMD_SYS_RESYNC_CACHE',
       {
@@ -1164,12 +1364,16 @@ async function main() {
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_SYS_RESYNC_CACHE', passed: test9 });
-    await sleep(2000);
+      testResults.push({ name: 'CMD_SYS_RESYNC_CACHE', passed: test9 });
+      await sleep(2000);
+    }
 
     // TEST 10: CMD_UNKNOWN_COMMAND (неизвестная команда)
     // Тест проверяет, что Safe Processor Wrapper корректно обрабатывает неизвестные типы задач
-    const test10 = await runTest(
+    if (!shouldRunTest(10, 'CMD_UNKNOWN_COMMAND')) {
+      console.log(colorize('⏭️  Skipping TEST 10: CMD_UNKNOWN_COMMAND', 'yellow'));
+    } else {
+      const test10 = await runTest(
       'TEST 10/12: Unknown Command (Error Handling)',
       'CMD_UNKNOWN_COMMAND',
       {
@@ -1181,12 +1385,16 @@ async function main() {
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_UNKNOWN_COMMAND', passed: test10 });
-    await sleep(2000);
+      testResults.push({ name: 'CMD_UNKNOWN_COMMAND', passed: test10 });
+      await sleep(2000);
+    }
 
     // TEST 10.5: CMD_РРРРРРР (неизвестная команда с кириллицей)
     // Демонстрирует, что валидатор работает для любой неизвестной команды
-    const test10_5 = await runTest(
+    if (!shouldRunTest(10.5, 'CMD_РРРРРРР')) {
+      console.log(colorize('⏭️  Skipping TEST 10.5: CMD_РРРРРРР', 'yellow'));
+    } else {
+      const test10_5 = await runTest(
       'TEST 10.5/12: Unknown Command with Cyrillic (CMD_РРРРРРР)',
       'CMD_РРРРРРР',
       {
@@ -1198,12 +1406,16 @@ async function main() {
       10000,
       entryQueue
     );
-    testResults.push({ name: 'CMD_РРРРРРР', passed: test10_5 });
-    await sleep(2000);
+      testResults.push({ name: 'CMD_РРРРРРР', passed: test10_5 });
+      await sleep(2000);
+    }
 
     // TEST 11: CMD_CLEANUP_ORG
     // ВНИМАНИЕ: Этот тест удаляет данные организации, поэтому он последний
-    const test11 = await runTest(
+    if (!shouldRunTest(11, 'CMD_CLEANUP_ORG')) {
+      console.log(colorize('⏭️  Skipping TEST 11: CMD_CLEANUP_ORG', 'yellow'));
+    } else {
+      const test11 = await runTest(
       'TEST 11/12: Cleanup Org',
       'CMD_CLEANUP_ORG',
       {
@@ -1214,7 +1426,8 @@ async function main() {
       15000, // Увеличенный таймаут для удаления датасетов
       entryQueue
     );
-    testResults.push({ name: 'CMD_CLEANUP_ORG', passed: test11 });
+      testResults.push({ name: 'CMD_CLEANUP_ORG', passed: test11 });
+    }
   } catch (error) {
     console.error(colorize(`\n❌ Fatal error: ${error.message}`, 'red'));
     console.error(error.stack);

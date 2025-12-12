@@ -1,5 +1,6 @@
 const { sendResult } = require('../infrastructure/bullmq/resultQueue');
 const ErrorHandler = require('./errorHandler');
+const { formatError } = require('./responseFormatter');
 const logger = require('./logger');
 
 /**
@@ -13,6 +14,8 @@ const logger = require('./logger');
  * @returns {Function} Обёрнутая функция-процессор
  */
 const createSafeProcessor = (processorName, processorFn) => async (job) => {
+  const startTime = Date.now();
+  
   try {
     return await processorFn(job);
   } catch (error) {
@@ -37,18 +40,18 @@ const createSafeProcessor = (processorName, processorFn) => async (job) => {
       }
     }
 
-    // 3. Формирование ответа для внешнего сервиса
+    // 3. Формирование ответа для внешнего сервиса в стандартизированном формате
     // Важно: берем meta из job.data, чтобы сервис мог сопоставить ответ
     const meta = job.data?.meta || {};
-    const errorPayload = ErrorHandler.createErrorPayload(error, {
+    const errorPayload = formatError(error, {
       jobId: job.id,
       jobName: job.name,
       ...meta
-    });
+    }, job.id, startTime);
 
     // 4. Отправка в очередь результатов (Гарантированная доставка ошибки)
     try {
-      await sendResult(`${job.name}_ERROR`, errorPayload, {
+      await sendResult(job.name, errorPayload, {
         jobId: job.id,
         jobName: job.name,
         ...meta

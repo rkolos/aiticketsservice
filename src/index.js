@@ -158,8 +158,9 @@ async function startApp() {
         error: error.message,
         stack: error.stack,
       });
-      // Завершить процесс, так как работать с пустым кэшем бессмысленно
-      process.exit(1);
+      // Не завершаем процесс - продолжаем работу с пустым кэшем
+      // Кэш будет заполняться по мере использования (lazy loading)
+      logger.warn('Continuing with empty cache - cache will be populated on demand');
     }
 
     // Инициализируем воркеры BullMQ

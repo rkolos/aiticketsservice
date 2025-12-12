@@ -10,6 +10,8 @@ const tokenCounter = require('../utils/tokenCounter');
 const historyFormatter = require('../utils/historyFormatter');
 const BillingService = require('../services/BillingService');
 const llmParser = require('../utils/llmParser');
+const { formatSuccess, wrapArray } = require('../utils/responseFormatter');
+const { extractContent, extractTargetLang } = require('../utils/requestNormalizer');
 
 /**
  * Сборка контекста из чанков в структурированную строку Markdown
@@ -286,7 +288,9 @@ function pruneHistory(history, modelName, historyLimit, jobId) {
  * @returns {Promise<void>}
  */
 async function handleGenResponse(job) {
-  const { orgId, query, history, lang, meta = {} } = job.data;
+  const startTime = Date.now();
+  const meta = job.data?.meta || {};
+  const { orgId, query, history, lang } = job.data;
 
   logger.info('CMD_GEN_RESPONSE: Starting retrieval', {
     jobId: job.id,
@@ -346,11 +350,39 @@ async function handleGenResponse(job) {
           query: query.substring(0, 50),
         });
         if (results && results.records && results.records.length > 0) {
-          // Очищаем retrievedRecords, оставляя только content и score
-          retrievedRecords = results.records.map(record => ({
-            content: record.segment?.content || record.content || '',
-            score: record.score || 0,
-          })).filter(item => item.content.trim().length > 0);
+          // Формируем retrievedRecords с информацией об источнике и документе
+          retrievedRecords = results.records.map(record => {
+            const recordData = {
+              content: record.segment?.content || record.content || '',
+              score: record.score || 0,
+              source: 'admin_kb',
+            };
+            
+            // Добавляем имя документа, если доступно
+            // Проверяем разные возможные пути к имени документа в ответе Dify API
+            const documentName = 
+              record.document?.name || 
+              record.document?.file_name || 
+              record.segment?.document?.name ||
+              record.segment?.document?.file_name ||
+              null;
+            if (documentName) {
+              recordData.documentName = documentName;
+            }
+            
+            return recordData;
+          }).filter(item => item.content.trim().length > 0);
+          
+          // Логируем структуру первого record для отладки
+          if (results.records.length > 0) {
+            logger.debug('CMD_GEN_RESPONSE: First record structure', {
+              jobId: job.id,
+              recordKeys: Object.keys(results.records[0]),
+              hasDocument: !!results.records[0].document,
+              hasSegmentDocument: !!results.records[0].segment?.document,
+              documentKeys: results.records[0].document ? Object.keys(results.records[0].document) : [],
+            });
+          }
 
           // Склеиваем сегменты в строку контекста
           context = results.records
@@ -395,6 +427,34 @@ async function handleGenResponse(job) {
           throw new Error('Dify admin key is not configured');
         }
         historyChunks = await difyApi.retrieveChunks(adminKey, historyKbId, processedQuery, 5);
+        
+        // Преобразуем historyChunks в формат retrievedRecords и объединяем с результатами из adminKb
+        if (historyChunks && historyChunks.length > 0) {
+          const historyRecords = historyChunks.map(chunk => {
+            const recordData = {
+              content: chunk.segment?.content || chunk.content || '',
+              score: chunk.score || 0,
+              source: 'history_kb',
+            };
+            
+            // Добавляем имя документа, если доступно
+            // Проверяем разные возможные пути к имени документа в ответе Dify API
+            const documentName = 
+              chunk.document?.name || 
+              chunk.document?.file_name || 
+              chunk.segment?.document?.name ||
+              chunk.segment?.document?.file_name ||
+              null;
+            if (documentName) {
+              recordData.documentName = documentName;
+            }
+            
+            return recordData;
+          }).filter(item => item.content.trim().length > 0);
+          
+          // Объединяем результаты из adminKb и historyKb
+          retrievedRecords = [...retrievedRecords, ...historyRecords];
+        }
       } catch (error) {
         logger.warn('CMD_GEN_RESPONSE: Error retrieving history chunks', {
           jobId: job.id,
@@ -646,20 +706,30 @@ async function handleGenResponse(job) {
       contextLength: prunedContextResult.context.length,
     });
 
-    const result = {
-      success: true,
-      data: {
-        text,
-        ...(finalSources.length > 0 && { sources: finalSources }),
-        usage: {
-          ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
-          stages: totalUsage.stages,
-        },
-        retrievedContext: retrievedRecords, // Возвращаем сырые данные контекста
-      },
+    // Формирование usage для meta
+    const usageData = {
+      ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
+      stages: totalUsage.stages,
     };
 
-    await sendResult('CMD_GEN_RESPONSE', result, meta);
+    // Форматирование ответа в стандартизированном формате
+    // Переименовываем text → content
+    const result = formatSuccess(
+      {
+        content: text,
+        ...(finalSources.length > 0 && { sources: finalSources }),
+        retrievedContext: retrievedRecords, // Возвращаем сырые данные контекста
+      },
+      meta,
+      job.id,
+      startTime
+    );
+
+    // Добавляем usage в meta
+    result.meta.usage = usageData;
+
+    // Передаем result.meta вместо исходного meta, чтобы сохранить usage
+    await sendResult('CMD_GEN_RESPONSE', result, result.meta);
 
     logger.info('CMD_GEN_RESPONSE: Final result sent to result queue', {
       jobId: job.id,
@@ -677,7 +747,12 @@ async function handleGenResponse(job) {
  * @returns {Promise<void>}
  */
 async function handleAnalyzeNewTicket(job) {
-  const { text, targetLang = 'ru', meta = {} } = job.data;
+  const startTime = Date.now();
+  const meta = job.data?.meta || {};
+  
+  // Нормализация входных данных с поддержкой обратной совместимости
+  const text = extractContent(job.data) || job.data?.text;
+  const targetLang = extractTargetLang(job.data) || job.data?.targetLanguage || 'ru';
 
   logger.info('CMD_ANALYZE_NEW_TICKET: Starting analysis', {
     jobId: job.id,
@@ -764,21 +839,29 @@ async function handleAnalyzeNewTicket(job) {
       });
     }
 
-    const result = {
-      success: true,
-      data: {
+    // Формирование usage для meta
+    const usageData = {
+      ...(usage.model && { model: usage.model }),
+      stages: [{
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        ...(usage.model && { model: usage.model }),
+      }],
+    };
+
+    // Форматирование ответа в стандартизированном формате
+    const result = formatSuccess(
+      {
         title: parsed.title,
         sentiment: parsed.sentiment.toLowerCase(),
-        usage: {
-          ...(usage.model && { model: usage.model }),
-          stages: [{
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            ...(usage.model && { model: usage.model }),
-          }], // Единичный этап для этой операции
-        },
       },
-    };
+      meta,
+      job.id,
+      startTime
+    );
+
+    // Добавляем usage в meta
+    result.meta.usage = usageData;
 
     await sendResult('CMD_ANALYZE_NEW_TICKET', result, meta);
 
@@ -796,7 +879,12 @@ async function handleAnalyzeNewTicket(job) {
  * @returns {Promise<void>}
  */
 async function handleTranslate(job) {
-  const { text, targetLang, lang, meta = {} } = job.data;
+  const startTime = Date.now();
+  const meta = job.data?.meta || {};
+  
+  // Нормализация входных данных с поддержкой обратной совместимости
+  const text = extractContent(job.data) || job.data?.text;
+  const targetLang = extractTargetLang(job.data) || job.data?.targetLang || job.data?.lang || 'en';
 
   logger.info('CMD_TRANSLATE: Starting translation', {
     jobId: job.id,
@@ -813,7 +901,7 @@ async function handleTranslate(job) {
   // Для translator workflow используем sendChatMessage с правильными параметрами
   // Согласно YAML: query содержит текст для перевода, inputs содержит lang
   const inputs = {
-    lang: targetLang || lang || 'en'
+    lang: targetLang
   };
 
   // Вызываем Dify Chat API для перевода
@@ -836,24 +924,34 @@ async function handleTranslate(job) {
     ...(usage.model && { model: usage.model }),
   });
 
-  const responseResult = {
-    success: true,
-    data: {
-      original: text,
-      translated: translatedText,
-      targetLang: inputs.lang,
-      usage: {
-        ...(usage.model && { model: usage.model }),
-        stages: [{
-          prompt_tokens: usage.prompt_tokens,
-          completion_tokens: usage.completion_tokens,
-          ...(usage.model && { model: usage.model }),
-        }], // Единичный этап для этой операции
-      },
-    },
+  // Формирование usage для meta
+  const usageData = {
+    ...(usage.model && { model: usage.model }),
+    stages: [{
+      prompt_tokens: usage.prompt_tokens,
+      completion_tokens: usage.completion_tokens,
+      ...(usage.model && { model: usage.model }),
+    }],
   };
 
-  await sendResult('CMD_TRANSLATE', responseResult, meta);
+  // Форматирование ответа в стандартизированном формате
+  // Унифицируем поля: original → sourceContent, translated → content
+  const responseResult = formatSuccess(
+    {
+      content: translatedText,
+      sourceContent: text,
+      targetLang: inputs.lang,
+    },
+    meta,
+    job.id,
+    startTime
+  );
+
+  // Добавляем usage в meta
+  responseResult.meta.usage = usageData;
+
+  // Передаем responseResult.meta вместо исходного meta, чтобы сохранить usage
+  await sendResult('CMD_TRANSLATE', responseResult, responseResult.meta);
 }
 
 /**
@@ -863,7 +961,9 @@ async function handleTranslate(job) {
  * @returns {Promise<void>}
  */
 async function handleKbListFiles(job) {
-  const { orgId, meta = {} } = job.data;
+  const startTime = Date.now();
+  const meta = job.data?.meta || {};
+  const { orgId } = job.data;
 
   logger.info('CMD_KB_LIST_FILES: Starting', {
     jobId: job.id,
@@ -887,10 +987,13 @@ async function handleKbListFiles(job) {
           orgId,
         });
 
-        const result = {
-          success: true,
-          data: [],
-        };
+        // Используем wrapArray для обертки пустого массива
+        const result = formatSuccess(
+          wrapArray([]),
+          meta,
+          job.id,
+          startTime
+        );
 
         await sendResult('CMD_KB_LIST_FILES', result, meta);
         return;
@@ -910,10 +1013,13 @@ async function handleKbListFiles(job) {
       status: doc.indexing_status || 'unknown',
     }));
 
-    const result = {
-      success: true,
-      data: files,
-    };
+    // Используем wrapArray для обертки массива в { items: [...], count: N }
+    const result = formatSuccess(
+      wrapArray(files),
+      meta,
+      job.id,
+      startTime
+    );
 
     await sendResult('CMD_KB_LIST_FILES', result, meta);
 
@@ -931,7 +1037,9 @@ async function handleKbListFiles(job) {
  * @returns {Promise<void>}
  */
 async function handleKbDeleteFile(job) {
-  const { orgId, fileId, meta = {} } = job.data;
+  const startTime = Date.now();
+  const meta = job.data?.meta || {};
+  const { orgId, fileId } = job.data;
 
   logger.info('CMD_KB_DELETE_FILE: Starting', {
     jobId: job.id,
@@ -951,13 +1059,17 @@ async function handleKbDeleteFile(job) {
     // Удаление документа
     await difyApi.deleteDocument(adminKey, adminKbId, fileId);
 
-    const result = {
-      success: true,
-      data: {
+    // Форматирование ответа в стандартизированном формате
+    // Переименовываем fileId → documentId
+    const result = formatSuccess(
+      {
         deleted: true,
-        fileId,
+        documentId: fileId, // Унифицированное название
       },
-    };
+      meta,
+      job.id,
+      startTime
+    );
 
     await sendResult('CMD_KB_DELETE_FILE', result, meta);
 

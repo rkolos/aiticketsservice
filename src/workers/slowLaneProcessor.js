@@ -8,6 +8,7 @@ const ErrorHandler = require('../utils/errorHandler');
 const { sendResult } = require('../infrastructure/bullmq/resultQueue');
 const { formatTicketHistory } = require('../utils/historyFormatter');
 const BillingService = require('../services/BillingService');
+const { formatSuccess } = require('../utils/responseFormatter');
 
 /**
  * Процессор для Slow Lane (фоновые задачи)
@@ -158,22 +159,29 @@ async function handleKbAddFile(job) {
       }],
     } : null;
 
-    const payload = {
-      success: true,
-      data: {
-        fileId: documentId,
+    const startTime = Date.now();
+    const resultMeta = { orgId, fileUrl, fileName, ...meta };
+
+    // Форматирование ответа в стандартизированном формате
+    // Переименовываем fileId → documentId
+    const payload = formatSuccess(
+      {
+        documentId: documentId, // Унифицированное название
         status: uploadResult?.status || 'indexing',
         fileName,
         orgId,
-        usage: fileUsage,
       },
-      meta: {
-        jobId: job.id,
-        ...meta,
-      },
-    };
+      resultMeta,
+      job.id,
+      startTime
+    );
 
-    await sendResult('CMD_KB_ADD_FILE', payload, { orgId, fileUrl, fileName, ...meta });
+    // Добавляем usage в meta, если есть
+    if (fileUsage) {
+      payload.meta.usage = fileUsage;
+    }
+
+    await sendResult('CMD_KB_ADD_FILE', payload, resultMeta);
     return payload;
   } catch (error) {
     logger.error('CMD_KB_ADD_FILE failed', {
@@ -206,22 +214,24 @@ async function handleKbAddFile(job) {
 
         const createResult = await difyApi.createDocumentByText(adminKey, adminKbId, fileName, fileText);
 
-        const payload = {
-          success: true,
-          data: {
-            fileId: createResult?.document_id || createResult?.id || createResult?.task_id,
+        const startTime = Date.now();
+        const resultMeta = { orgId, fileUrl, fileName, ...meta };
+
+        // Форматирование ответа в стандартизированном формате
+        const payload = formatSuccess(
+          {
+            documentId: createResult?.document_id || createResult?.id || createResult?.task_id, // Унифицированное название
             status: createResult?.status || 'indexing',
             fileName,
             orgId,
             fallback: 'createDocumentByText',
           },
-          meta: {
-            jobId: job.id,
-            ...meta,
-          },
-        };
+          resultMeta,
+          job.id,
+          startTime
+        );
 
-        await sendResult('CMD_KB_ADD_FILE', payload, { orgId, fileUrl, fileName, ...meta });
+        await sendResult('CMD_KB_ADD_FILE', payload, resultMeta);
         return payload;
       } catch (fallbackError) {
         logger.error('CMD_KB_ADD_FILE fallback failed', {
@@ -394,24 +404,38 @@ async function handleArchiveTicket(job) {
 
     const totalUsage = BillingService.accumulateUsage(usageStages);
 
-    const payload = {
-      success: true,
-      data: {
-        docId,
-        docName,
-        orgId,
-        usage: {
-          ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
-          stages: totalUsage.stages,
-        },
-      },
-      meta: {
-        jobId: job.id,
-        ...meta,
-      },
+    const startTime = Date.now();
+    // Сохраняем исходный meta с traceId, добавляя дополнительные поля
+    const resultMeta = { 
+      ...meta, // Сохраняем исходный meta (включая traceId)
+      orgId, 
+      ticketId 
     };
 
-    await sendResult('CMD_ARCHIVE_TICKET', payload, { orgId, ticketId, ...meta });
+    // Формирование usage для meta
+    const usageData = {
+      ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
+      stages: totalUsage.stages,
+    };
+
+    // Форматирование ответа в стандартизированном формате
+    // Переименовываем docId → documentId
+    const payload = formatSuccess(
+      {
+        documentId: docId, // Унифицированное название
+        docName,
+        orgId,
+      },
+      resultMeta,
+      job.id,
+      startTime
+    );
+
+    // Добавляем usage в meta (перезаписываем, если был usage из formatSuccess)
+    payload.meta.usage = usageData;
+
+    // Передаем payload.meta вместо resultMeta, чтобы сохранить usage
+    await sendResult('CMD_ARCHIVE_TICKET', payload, payload.meta);
     return payload;
   } catch (error) {
     logger.error('CMD_ARCHIVE_TICKET failed', {
@@ -429,18 +453,17 @@ async function handleArchiveTicket(job) {
  * Системная синхронизация кэша с Dify
  */
 async function handleSysResyncCache(job) {
-  const { meta = {} } = job.data || {};
+  const startTime = Date.now();
+  const meta = job.data?.meta || {};
 
   try {
     const stats = await OrganizationService.syncCacheWithDify();
-    const payload = {
-      success: true,
-      data: stats,
-      meta: {
-        jobId: job.id,
-        ...meta,
-      },
-    };
+    const payload = formatSuccess(
+      stats,
+      meta,
+      job.id,
+      startTime
+    );
     await sendResult('CMD_SYS_RESYNC_CACHE', payload, meta);
     return payload;
   } catch (error) {
@@ -491,22 +514,23 @@ async function handleCleanupOrg(job) {
     // Очистить кэш
     await OrganizationService.invalidateOrgCache(orgId, 'cleanup_org');
 
-    const payload = {
-      success: true,
-      data: {
+    const startTime = Date.now();
+    const resultMeta = { orgId, ...meta };
+
+    const payload = formatSuccess(
+      {
         orgId,
         deleted: {
           adminKbId,
           historyKbId,
         },
       },
-      meta: {
-        jobId: job.id,
-        ...meta,
-      },
-    };
+      resultMeta,
+      job.id,
+      startTime
+    );
 
-    await sendResult('CMD_CLEANUP_ORG', payload, { orgId, ...meta });
+    await sendResult('CMD_CLEANUP_ORG', payload, resultMeta);
     return payload;
   } catch (error) {
     logger.error('CMD_CLEANUP_ORG failed', {
