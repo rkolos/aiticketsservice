@@ -1,6 +1,7 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
 const config = require('../config');
+const { MAX_FILE_SIZE_BYTES } = require('../core/constants');
 
 /**
  * Базовый класс ошибки FileService
@@ -52,6 +53,32 @@ class IdleTimeoutError extends FileServiceError {
 }
 
 /**
+ * Ошибка: файл слишком большой для fallback обработки
+ */
+class FileTooLargeForFallbackError extends FileServiceError {
+  constructor(fileSize, limit) {
+    super(`File size ${fileSize} exceeds limit ${limit} for text processing`, 'FILE_TOO_LARGE_FOR_FALLBACK');
+    this.name = 'FileTooLargeForFallbackError';
+    this.fileSize = fileSize;
+    this.limit = limit;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+/**
+ * Ошибка: файл слишком большой для скачивания
+ */
+class FileTooLargeError extends FileServiceError {
+  constructor(fileSize, limit) {
+    super(`File size ${fileSize} exceeds limit ${limit}`, 'FILE_TOO_LARGE');
+    this.name = 'FileTooLargeError';
+    this.fileSize = fileSize;
+    this.limit = limit;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
+/**
  * Сервис для работы с файлами (скачивание)
  */
 class FileService {
@@ -90,6 +117,18 @@ class FileService {
       // Извлечь content-length из заголовков
       const contentLength = response.headers['content-length'];
       const size = contentLength ? parseInt(contentLength, 10) : null;
+
+      // Проверка размера файла перед скачиванием
+      if (size !== null && size > MAX_FILE_SIZE_BYTES) {
+        logger.warn('FileService: file size exceeds limit', {
+          url,
+          size,
+          limit: MAX_FILE_SIZE_BYTES,
+        });
+        // Уничтожаем стрим, чтобы не тратить ресурсы
+        response.data.destroy();
+        throw new FileTooLargeError(size, MAX_FILE_SIZE_BYTES);
+      }
 
       logger.debug('FileService: response received', {
         url,
@@ -254,4 +293,6 @@ module.exports.FileServiceError = FileServiceError;
 module.exports.FileNotFoundError = FileNotFoundError;
 module.exports.ConnectionTimeoutError = ConnectionTimeoutError;
 module.exports.IdleTimeoutError = IdleTimeoutError;
+module.exports.FileTooLargeForFallbackError = FileTooLargeForFallbackError;
+module.exports.FileTooLargeError = FileTooLargeError;
 

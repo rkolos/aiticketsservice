@@ -9,6 +9,8 @@ const { sendResult } = require('../infrastructure/bullmq/resultQueue');
 const { formatTicketHistory } = require('../utils/historyFormatter');
 const BillingService = require('../services/BillingService');
 const { formatSuccess } = require('../utils/responseFormatter');
+const { MAX_TEXT_PROCESSING_LIMIT } = require('../core/constants');
+const { FileTooLargeForFallbackError } = require('../services/FileService');
 
 /**
  * Процессор для Slow Lane (фоновые задачи)
@@ -209,7 +211,20 @@ async function handleKbAddFile(job) {
           fileUrl,
         });
 
-        const { stream: retryStream } = await FileService.downloadStream(fileUrl);
+        const { stream: retryStream, size } = await FileService.downloadStream(fileUrl);
+        
+        // Проверка размера файла перед чтением в память
+        if (size !== null && size > MAX_TEXT_PROCESSING_LIMIT) {
+          logger.warn('CMD_KB_ADD_FILE: file too large for fallback processing', {
+            orgId,
+            fileName,
+            fileUrl,
+            size,
+            limit: MAX_TEXT_PROCESSING_LIMIT,
+          });
+          throw new FileTooLargeForFallbackError(size, MAX_TEXT_PROCESSING_LIMIT);
+        }
+        
         const fileText = await streamToString(retryStream);
 
         const createResult = await difyApi.createDocumentByText(adminKey, adminKbId, fileName, fileText);
