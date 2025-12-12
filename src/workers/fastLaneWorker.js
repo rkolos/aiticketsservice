@@ -341,17 +341,36 @@ async function handleGenResponse(job) {
     if (adminKbId) {
       try {
         const results = await difyApi.retrieve(adminKbId, processedQuery);
+        
+        // Логируем полную структуру ответа для диагностики
         logger.info(`CMD_GEN_RESPONSE: Retrieve results`, {
           jobId: job.id,
           orgId,
           adminKbId,
           hasResults: !!results,
-          recordsCount: results?.records?.length || 0,
+          resultsType: typeof results,
+          isArray: Array.isArray(results),
+          resultsKeys: results && typeof results === 'object' ? Object.keys(results) : [],
+          recordsCount: results?.records?.length || (Array.isArray(results) ? results.length : 0),
           query: query.substring(0, 50),
         });
-        if (results && results.records && results.records.length > 0) {
+        
+        // Обрабатываем разные форматы ответа от Dify API
+        let records = [];
+        if (Array.isArray(results)) {
+          // Если ответ - массив, используем его напрямую
+          records = results;
+        } else if (results && results.records && Array.isArray(results.records)) {
+          // Если ответ - объект с полем records
+          records = results.records;
+        } else if (results && results.data && Array.isArray(results.data)) {
+          // Если ответ - объект с полем data
+          records = results.data;
+        }
+        
+        if (records && records.length > 0) {
           // Формируем retrievedRecords с информацией об источнике и документе
-          retrievedRecords = results.records.map(record => {
+          retrievedRecords = records.map(record => {
             const recordData = {
               content: record.segment?.content || record.content || '',
               score: record.score || 0,
@@ -374,32 +393,41 @@ async function handleGenResponse(job) {
           }).filter(item => item.content.trim().length > 0);
           
           // Логируем структуру первого record для отладки
-          if (results.records.length > 0) {
+          if (records.length > 0) {
             logger.debug('CMD_GEN_RESPONSE: First record structure', {
               jobId: job.id,
-              recordKeys: Object.keys(results.records[0]),
-              hasDocument: !!results.records[0].document,
-              hasSegmentDocument: !!results.records[0].segment?.document,
-              documentKeys: results.records[0].document ? Object.keys(results.records[0].document) : [],
+              recordKeys: Object.keys(records[0]),
+              hasDocument: !!records[0].document,
+              hasSegmentDocument: !!records[0].segment?.document,
+              documentKeys: records[0].document ? Object.keys(records[0].document) : [],
+              recordContent: records[0].segment?.content?.substring(0, 100) || records[0].content?.substring(0, 100) || 'NO CONTENT',
             });
           }
 
           // Склеиваем сегменты в строку контекста
-          context = results.records
+          context = records
             .map(r => r.segment?.content || r.content || '')
             .filter(content => content.trim().length > 0)
             .join('\n\n');
 
-          logger.info(`CMD_GEN_RESPONSE: Retrieved ${results.records.length} chunks via Hybrid Search and Jina Reranker`, {
+          logger.info(`CMD_GEN_RESPONSE: Retrieved ${records.length} chunks via Hybrid Search and Jina Reranker`, {
             jobId: job.id,
             orgId,
             adminKbId,
+            retrievedRecordsCount: retrievedRecords.length,
+            retrievedRecordsPreview: retrievedRecords.slice(0, 2).map(r => ({
+              contentLength: r.content?.length || 0,
+              score: r.score,
+              source: r.source,
+              hasDocumentName: !!r.documentName,
+            })),
           });
         } else {
           logger.info('CMD_GEN_RESPONSE: No relevant chunks found via Hybrid Search', {
             jobId: job.id,
             orgId,
             adminKbId,
+            recordsLength: records?.length || 0,
           });
         }
       } catch (error) {
@@ -454,6 +482,14 @@ async function handleGenResponse(job) {
           
           // Объединяем результаты из adminKb и historyKb
           retrievedRecords = [...retrievedRecords, ...historyRecords];
+          
+          logger.info('CMD_GEN_RESPONSE: History chunks added to retrievedRecords', {
+            jobId: job.id,
+            orgId,
+            historyKbId,
+            historyRecordsCount: historyRecords.length,
+            totalRetrievedRecordsCount: retrievedRecords.length,
+          });
         }
       } catch (error) {
         logger.warn('CMD_GEN_RESPONSE: Error retrieving history chunks', {
@@ -465,6 +501,18 @@ async function handleGenResponse(job) {
         // Graceful degradation: продолжаем с пустым массивом
       }
     }
+    
+    // Логируем итоговое состояние retrievedRecords перед обрезкой контекста
+    logger.info('CMD_GEN_RESPONSE: RetrievedRecords before context pruning', {
+      jobId: job.id,
+      orgId,
+      retrievedRecordsCount: retrievedRecords.length,
+      retrievedRecordsSummary: retrievedRecords.map(r => ({
+        contentLength: r.content?.length || 0,
+        score: r.score,
+        source: r.source,
+      })),
+    });
 
     // Шаг 3: Context Assembly - сборка контекста из Hybrid Search результатов и истории
     // context уже содержит результаты Hybrid Search с Jina Reranker
@@ -724,6 +772,18 @@ async function handleGenResponse(job) {
       job.id,
       startTime
     );
+
+    // Логируем финальный результат перед отправкой
+    logger.info('CMD_GEN_RESPONSE: Final result structure', {
+      jobId: job.id,
+      orgId,
+      hasRetrievedContext: 'retrievedContext' in result.data,
+      retrievedContextType: typeof result.data?.retrievedContext,
+      retrievedContextIsArray: Array.isArray(result.data?.retrievedContext),
+      retrievedContextLength: result.data?.retrievedContext?.length || 0,
+      retrievedRecordsLength: retrievedRecords.length,
+      resultDataKeys: Object.keys(result.data || {}),
+    });
 
     // Добавляем usage в meta
     result.meta.usage = usageData;

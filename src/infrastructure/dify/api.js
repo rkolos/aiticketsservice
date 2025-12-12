@@ -276,6 +276,15 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
       validateStatus: (status) => status < 500, // хотим видеть тело 4xx
     });
 
+    // Проверяем статус ответа - если это ошибка (4xx), выбрасываем исключение
+    if (response.status >= 400 && response.status < 500) {
+      const errorMessage = response.data?.message || response.data?.error || `HTTP ${response.status}`;
+      const error = new Error(`Dify API error: ${errorMessage}`);
+      error.statusCode = response.status;
+      error.response = response;
+      throw error;
+    }
+
     const data = response.data || {};
 
     // Нормализуем форму ответа: документ может приходить в разных вложениях/поля
@@ -530,7 +539,26 @@ async function retrieve(datasetId, query, retrievalConfig = {}) {
       }
     );
 
-    return response.data;
+    logger.info('Dify retrieve API response structure', {
+      datasetId,
+      hasData: !!response.data,
+      dataType: typeof response.data,
+      isArray: Array.isArray(response.data),
+      dataKeys: response.data && typeof response.data === 'object' ? Object.keys(response.data) : [],
+      recordsCount: response.data?.records?.length || (Array.isArray(response.data) ? response.data.length : 0),
+      fullResponse: JSON.stringify(response.data).substring(0, 500),
+    });
+
+    // Нормализуем ответ: если response.data уже содержит records, возвращаем как есть
+    // Если response.data - массив, оборачиваем в объект с полем records
+    // Это обеспечивает единообразный формат ответа
+    if (response.data && response.data.records) {
+      return response.data;
+    } else if (Array.isArray(response.data)) {
+      return { records: response.data };
+    } else {
+      return response.data || { records: [] };
+    }
   } catch (error) {
     logger.error('Error retrieving with Hybrid Search', {
       datasetId,
