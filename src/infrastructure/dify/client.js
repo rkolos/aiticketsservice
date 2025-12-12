@@ -1,7 +1,14 @@
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 const config = require('../../config');
 const logger = require('../../utils/logger');
 const { DifyApiError } = require('../../core/errors');
+
+// Создание агентов с Keep-Alive для переиспользования TCP-соединений
+const agentOptions = { keepAlive: true, maxSockets: 100, maxFreeSockets: 10 };
+const httpAgent = new http.Agent(agentOptions);
+const httpsAgent = new https.Agent(agentOptions);
 
 // Создание настроенного инстанса Axios для Dify API
 const difyClient = axios.create({
@@ -9,6 +16,8 @@ const difyClient = axios.create({
   timeout: 60000, // 60 секунд - LLM могут отвечать долго
   maxBodyLength: Infinity, // Убираем ограничение на размер тела запроса для больших файлов
   maxContentLength: Infinity, // Убираем ограничение на размер контента ответа
+  httpAgent,
+  httpsAgent,
 });
 
 // Request Interceptor - логирование исходящих запросов
