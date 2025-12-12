@@ -12,6 +12,7 @@ const BillingService = require('../services/BillingService');
 const llmParser = require('../utils/llmParser');
 const { formatSuccess, wrapArray } = require('../utils/responseFormatter');
 const { extractContent, extractTargetLang } = require('../utils/requestNormalizer');
+const { trimLogObject } = require('../utils/logTrimmer');
 
 /**
  * Сборка контекста из чанков в структурированную строку Markdown
@@ -803,7 +804,7 @@ async function handleGenResponse(job) {
       jobId: job.id,
       orgId,
       retrievedRecordsCount: retrievedRecords.length,
-      retrievedRecords: retrievedRecords,
+      retrievedRecords: trimLogObject(retrievedRecords),
       contextLength: prunedContextResult.context.length,
     });
 
@@ -836,6 +837,7 @@ async function handleGenResponse(job) {
       retrievedContextLength: result.data?.retrievedContext?.length || 0,
       retrievedRecordsLength: retrievedRecords.length,
       resultDataKeys: Object.keys(result.data || {}),
+      resultData: trimLogObject(result.data),
     });
 
     // Добавляем usage в meta

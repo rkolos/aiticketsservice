@@ -4,6 +4,7 @@ const https = require('https');
 const config = require('../../config');
 const logger = require('../../utils/logger');
 const { DifyApiError } = require('../../core/errors');
+const { trimLogObject } = require('../../utils/logTrimmer');
 
 // Создание агентов с Keep-Alive для переиспользования TCP-соединений
 const agentOptions = { keepAlive: true, maxSockets: 100, maxFreeSockets: 10 };
@@ -47,6 +48,7 @@ difyClient.interceptors.response.use(
       status: response.status,
       url: response.config.url,
       duration: duration ? `${duration}ms` : null,
+      data: trimLogObject(response.data),
     });
 
     return response;
@@ -64,6 +66,7 @@ difyClient.interceptors.response.use(
         url: config?.url,
         difyCode,
         message,
+        data: trimLogObject(data),
       });
 
       // Выбрасываем кастомную ошибку с деталями от Dify
