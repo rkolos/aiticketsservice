@@ -10,6 +10,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "start:with-dify-check": "node scripts/start-with-dify-check.js --check-dify",
+    "dev:with-dify-check": "node scripts/start-with-dify-check.js --check-dify --dev",
+    "start:skip-dify": "node scripts/start-with-dify-check.js --skip-dify-check",
+    "dev:skip-dify": "node scripts/start-with-dify-check.js --skip-dify-check --dev",
     "lint": "eslint src/**/*.js",
     "lint:fix": "eslint src/**/*.js --fix",
     "format": "prettier --write src/**/*.js",
