@@ -45,16 +45,12 @@ function wrapArray(array) {
  * @returns {Object} Стандартизированный ответ
  */
 function formatSuccess(data, meta = {}, jobId, startTime) {
-  // Извлекаем usage из data, если он там есть
   const { data: cleanData, usage } = moveUsageToMeta(data);
 
-  // Вычисляем время обработки
   const processingTimeMs = startTime ? Date.now() - startTime : undefined;
 
-  // Извлекаем traceId из разных возможных мест в meta
   const traceId = meta.traceId || meta.meta?.traceId || undefined;
 
-  // Формируем стандартизированный ответ
   const result = {
     success: true,
     meta: {
@@ -63,7 +59,6 @@ function formatSuccess(data, meta = {}, jobId, startTime) {
       jobId: jobId || undefined,
       ...(processingTimeMs !== undefined && { processingTimeMs }),
       ...(usage && { usage }),
-      // Сохраняем остальные метаданные из исходного meta (кроме traceId и вложенного meta)
       ...Object.keys(meta).reduce((acc, key) => {
         if (key !== 'traceId' && key !== 'meta') {
           acc[key] = meta[key];
@@ -86,13 +81,10 @@ function formatSuccess(data, meta = {}, jobId, startTime) {
  * @returns {Object} Стандартизированный ответ с ошибкой
  */
 function formatError(error, meta = {}, jobId, startTime) {
-  // Нормализуем ошибку через errorHandler
   const normalized = normalizeError(error);
 
-  // Вычисляем время обработки
   const processingTimeMs = startTime ? Date.now() - startTime : undefined;
 
-  // Формируем стандартизированный ответ с ошибкой
   const result = {
     success: false,
     meta: {
@@ -100,7 +92,6 @@ function formatError(error, meta = {}, jobId, startTime) {
       timestamp: Date.now(),
       jobId: jobId || undefined,
       ...(processingTimeMs !== undefined && { processingTimeMs }),
-      // Сохраняем остальные метаданные
       ...Object.keys(meta).reduce((acc, key) => {
         if (key !== 'traceId' && key !== 'meta') {
           acc[key] = meta[key];
@@ -112,7 +103,6 @@ function formatError(error, meta = {}, jobId, startTime) {
       code: normalized.errorCode,
       message: normalized.message,
       ...(normalized.originalError && { details: normalized.originalError.message }),
-      // Определяем retryable на основе типа ошибки
       retryable: isRetryableError(normalized.errorCode),
     },
   };

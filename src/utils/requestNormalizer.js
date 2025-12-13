@@ -27,12 +27,10 @@ function extractTargetLang(data) {
     return undefined;
   }
 
-  // Проверяем в params, если есть
   if (data.params && data.params.targetLang) {
     return data.params.targetLang;
   }
 
-  // Проверяем в корне данных
   return data.targetLang || data.targetLanguage || data.lang || undefined;
 }
 
@@ -61,20 +59,16 @@ function normalizeRequest(jobData) {
     return jobData;
   }
 
-  // Если данные уже в новом формате (с payload), возвращаем как есть
   if (jobData.payload) {
     return jobData;
   }
 
-  // Извлекаем метаданные
   const meta = jobData.meta || {};
 
-  // Извлекаем основные поля
   const content = extractContent(jobData);
   const targetLang = extractTargetLang(jobData);
   const orgId = extractOrgId(jobData);
 
-  // Формируем нормализованный объект
   const normalized = {
     ...jobData,
     meta: {
@@ -83,12 +77,10 @@ function normalizeRequest(jobData) {
     },
   };
 
-  // Если есть content или targetLang, создаем структуру payload для совместимости
   if (content || targetLang) {
     normalized.content = content;
     if (targetLang) {
       normalized.targetLang = targetLang;
-      // Также сохраняем в params для совместимости с новым форматом
       if (!normalized.params) {
         normalized.params = {};
       }

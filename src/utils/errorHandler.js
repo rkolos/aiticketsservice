@@ -2,12 +2,10 @@ const { DifyApiError, KbNotFoundError } = require('../core/errors');
 const logger = require('./logger');
 
 /**
- * Нормализация ошибки в стандартизированную структуру
- * @param {Error} error - Объект ошибки
- * @returns {Object} Нормализованная ошибка { errorCode, message, originalError? }
+ * Нормализует ошибку в стандартизированную структуру с кодом ошибки
+ * Используется в: src/utils/responseFormatter.js, src/utils/safeProcessor.js
  */
 function normalizeError(error) {
-  // Обработка null и undefined
   if (!error) {
     return {
       errorCode: 'INTERNAL_ERROR',
@@ -15,9 +13,7 @@ function normalizeError(error) {
     };
   }
 
-  // Обработка DifyApiError
   if (error instanceof DifyApiError) {
-    // Коды ошибок, указывающие на отсутствие ресурса
     const resourceNotFoundCodes = [
       'dataset_not_found',
       'knowledge_base_not_found',
@@ -31,11 +27,10 @@ function normalizeError(error) {
     return {
       errorCode: isResourceNotFound ? errorCode : errorCode || 'DIFY_API_ERROR',
       message: error.message || 'Dify API error',
-      originalError: error, // Для логирования
+      originalError: error,
     };
   }
 
-  // Обработка KbNotFoundError
   if (error instanceof KbNotFoundError) {
     return {
       errorCode: 'KB_NOT_FOUND',
@@ -44,7 +39,6 @@ function normalizeError(error) {
     };
   }
 
-  // Обработка ошибок неизвестных команд
   if (error.message && error.message.includes('Unknown command:')) {
     return {
       errorCode: 'UNKNOWN_COMMAND',
@@ -53,7 +47,6 @@ function normalizeError(error) {
     };
   }
 
-  // Обработка ошибок маршрутизации
   if (error.message && (
     error.message.includes('routing') ||
     error.message.includes('queue') ||
@@ -66,7 +59,6 @@ function normalizeError(error) {
     };
   }
 
-  // Обработка ошибок валидации
   if (error.name === 'ValidationError' ||
       (error.message && error.message.includes('validation'))) {
     return {
@@ -76,7 +68,6 @@ function normalizeError(error) {
     };
   }
 
-  // Обработка сетевых ошибок Axios
   if (error.isAxiosError || (error.request && !error.response)) {
     const errorCode =
       error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT' ? 'TIMEOUT' : 'NETWORK_ERROR';
@@ -88,7 +79,6 @@ function normalizeError(error) {
     };
   }
 
-  // Обработка ошибок парсинга JSON
   if (error instanceof SyntaxError || error.name === 'SyntaxError') {
     return {
       errorCode: 'LLM_OUTPUT_PARSE_ERROR',
@@ -97,7 +87,6 @@ function normalizeError(error) {
     };
   }
 
-  // Остальные ошибки
   return {
     errorCode: 'INTERNAL_ERROR',
     message: error.message || 'Unknown system error',
@@ -106,36 +95,30 @@ function normalizeError(error) {
 }
 
 /**
- * Создание финального пейлоада ошибки для очереди результатов
+ * Создает пейлоад ошибки в старом формате для обратной совместимости
  * @deprecated Используйте formatError из responseFormatter.js для нового формата
- * @param {Error} error - Объект ошибки
- * @param {Object} meta - Метаданные задачи (контекст)
- * @returns {Object} Пейлоад для очереди результатов (старый формат для обратной совместимости)
+ * Используется в: src/workers/fastLaneWorker.js (handleGenResponse) - для обратной совместимости
  */
 function createErrorPayload(error, meta = {}) {
   const normalized = normalizeError(error);
 
-  // Старый формат для обратной совместимости
   return {
     status: 'error',
     errorCode: normalized.errorCode,
     message: normalized.message,
-    meta, // Критично: всегда возвращать контекст!
+    meta,
   };
 }
 
 /**
- * Обработка ошибок Dify, указывающих на отсутствие ресурса, с инвалидацией кэша
- * @param {DifyApiError} error - Ошибка Dify API
- * @param {string} orgId - ID организации
- * @returns {Object} Нормализованная ошибка
+ * Обрабатывает ошибки Dify API, связанные с отсутствием ресурсов, и инвалидирует кэш организации
+ * Используется в: src/utils/safeProcessor.js, src/workers/*.js - для обработки ошибок ресурсов Dify
  */
 async function handleDifyResourceError(error, orgId) {
   if (!(error instanceof DifyApiError)) {
     return normalizeError(error);
   }
 
-  // Коды ошибок, указывающие на отсутствие ресурса
   const resourceNotFoundCodes = [
     'dataset_not_found',
     'knowledge_base_not_found',
@@ -145,11 +128,8 @@ async function handleDifyResourceError(error, orgId) {
   const isResourceNotFound =
     resourceNotFoundCodes.includes(error.difyCode) || error.statusCode === 404;
 
-  // Если это ошибка отсутствия ресурса и есть orgId
   if (isResourceNotFound && orgId) {
     try {
-      // Импорт OrganizationService (может быть еще не реализован)
-      // Используем динамический импорт с обработкой ошибок
       let OrganizationService;
       try {
         OrganizationService = require('../services/OrganizationService');
@@ -160,7 +140,6 @@ async function handleDifyResourceError(error, orgId) {
         return normalizeError(error);
       }
 
-      // Инвалидация кэша
       if (OrganizationService && OrganizationService.invalidateOrgCache) {
         await OrganizationService.invalidateOrgCache(orgId);
         logger.warn('Cache invalidated due to Dify resource error', {
@@ -175,7 +154,6 @@ async function handleDifyResourceError(error, orgId) {
         orgId,
         error: invalidationError.message,
       });
-      // Продолжаем выполнение даже при ошибке инвалидации
     }
   }
 

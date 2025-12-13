@@ -1,9 +1,10 @@
 /**
- * Константы для приложения
+ * Константы приложения: имена очередей BullMQ и лимиты размера файлов
+ * Используется в: src/infrastructure/bullmq/*, src/workers/*, src/services/FileService.js
  */
 module.exports = {
   QUEUES: {
-    ENTRY: 'ai-entry-queue',          // Единая точка входа для всех задач
+    ENTRY: 'ai-entry-queue',
     INTERACTIVE: 'ai-interactive-queue',
     BACKGROUND: 'ai-background-queue',
     RESULTS: 'ai-results-queue',

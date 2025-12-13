@@ -1,7 +1,6 @@
 require('dotenv').config();
 const schema = require('./schema');
 
-// Валидация конфигурации
 const { error, value } = schema.validate(process.env);
 
 if (error) {
@@ -12,10 +11,10 @@ if (error) {
   process.exit(1);
 }
 
-// Экспорт конфигурации
-// Структура fileService формируется из переменных окружения:
-// - FILE_SERVICE_CONNECTION_TIMEOUT -> fileService.connectionTimeout
-// - FILE_SERVICE_IDLE_TIMEOUT -> fileService.idleTimeout
+/**
+ * Конфигурация приложения, собранная из переменных окружения
+ * Используется во всех модулях проекта через require('./config') или require('../config')
+ */
 module.exports = {
   env: value.NODE_ENV,
   logLevel: value.LOG_LEVEL,
@@ -35,8 +34,8 @@ module.exports = {
       querySimplifier: value.DIFY_APP_KEY_QUERY_SIMPLIFIER,
     },
     workflow: {
-      maxInputVariableSize: parseInt(value.DIFY_WORKFLOW_MAX_INPUT_VARIABLE_SIZE, 10), // В байтах
-      maxRequestBodySize: parseInt(value.DIFY_WORKFLOW_MAX_REQUEST_BODY_SIZE, 10), // В байтах
+      maxInputVariableSize: parseInt(value.DIFY_WORKFLOW_MAX_INPUT_VARIABLE_SIZE, 10),
+      maxRequestBodySize: parseInt(value.DIFY_WORKFLOW_MAX_REQUEST_BODY_SIZE, 10),
     },
     pagination: {
       listDatasetsPageLimit: parseInt(value.DIFY_LIST_DATASETS_PAGE_LIMIT, 10),

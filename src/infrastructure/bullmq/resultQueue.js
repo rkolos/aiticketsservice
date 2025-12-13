@@ -52,16 +52,9 @@ resultQueue.on('error', (error) => {
  */
 async function sendResult(jobName, data, meta = {}) {
   try {
-    // Мерджим meta из data с переданным meta (переданный meta имеет приоритет)
-    // Это позволяет сохранить usage, который был добавлен в data.meta
-    const mergedMeta = {
-      ...(data.meta || {}),
-      ...meta,
-    };
-
     const job = await resultQueue.add(jobName, {
       ...data,
-      meta: mergedMeta,
+      meta,
     });
 
     logger.debug('Result sent', {

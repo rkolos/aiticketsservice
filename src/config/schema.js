@@ -1,5 +1,9 @@
 const Joi = require('joi');
 
+/**
+ * Схема валидации переменных окружения
+ * Используется в: src/config/index.js - для валидации конфигурации при старте приложения
+ */
 const schema = Joi.object({
   // Server/App
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),

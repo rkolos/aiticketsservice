@@ -15,15 +15,12 @@ const { extractContent, extractTargetLang } = require('../utils/requestNormalize
 const { trimLogObject } = require('../utils/logTrimmer');
 
 /**
- * Сборка контекста из чанков в структурированную строку Markdown
- * @param {Array} adminChunks - Чанки из административной базы знаний
- * @param {Array} historyChunks - Чанки из базы истории тикетов
- * @returns {string} Структурированная строка Markdown с контекстом
+ * Собирает контекст из чанков в структурированную строку Markdown
+ * Используется в: src/workers/fastLaneWorker.js (pruneContext) - для форматирования контекста перед передачей в LLM
  */
 function assembleContext(adminChunks, historyChunks) {
   const parts = [];
 
-  // Проверяем, есть ли хотя бы один чанк
   if (adminChunks.length === 0 && historyChunks.length === 0) {
     return 'Контекст не найден';
   }
@@ -31,7 +28,6 @@ function assembleContext(adminChunks, historyChunks) {
   parts.push('## Контекст из базы знаний');
   parts.push('');
 
-  // Административная база
   if (adminChunks.length > 0) {
     parts.push('### Административная база');
     parts.push('');
@@ -45,7 +41,6 @@ function assembleContext(adminChunks, historyChunks) {
     }
   }
 
-  // История тикетов
   if (historyChunks.length > 0) {
     parts.push('### История тикетов');
     parts.push('');
@@ -59,7 +54,6 @@ function assembleContext(adminChunks, historyChunks) {
     }
   }
 
-  // Убираем последнюю пустую строку
   if (parts.length > 0 && parts[parts.length - 1] === '') {
     parts.pop();
   }
@@ -68,32 +62,23 @@ function assembleContext(adminChunks, historyChunks) {
 }
 
 /**
- * Вычисление минимального лимита из трех уровней для переменной
- * @param {number} contextTokens - Токены контекста
- * @param {number} historyTokens - Токены истории
- * @param {number} queryTokens - Токены запроса
- * @returns {Object} Объект с лимитами для context и history
+ * Вычисляет минимальный лимит токенов из трех уровней ограничений (Dify input variable, Dify request body, model context window)
+ * Используется в: src/workers/fastLaneWorker.js (handleGenResponse) - для определения лимитов перед обрезкой контекста и истории
  */
 function calculateLimits(contextTokens, historyTokens, queryTokens) {
   const modelContextWindow = config.model.contextWindow;
-  const maxInputVariableSize = config.dify.workflow.maxInputVariableSize; // В байтах
-  const maxRequestBodySize = config.dify.workflow.maxRequestBodySize; // В байтах
+  const maxInputVariableSize = config.dify.workflow.maxInputVariableSize;
+  const maxRequestBodySize = config.dify.workflow.maxRequestBodySize;
 
-  // Приблизительный перевод токенов в байты (консервативная оценка: 1 токен ≈ 4 байта)
   const BYTES_PER_TOKEN = 4;
 
-  // Лимит Dify на размер входной переменной (в токенах)
   const difyInputVariableLimitTokens = Math.floor(maxInputVariableSize / BYTES_PER_TOKEN);
 
-  // Лимит Dify на размер POST-запроса (в токенах)
-  // Учитываем все переменные: context, history, query + системный промпт (~100 токенов)
   const systemPromptTokens = 100;
   const difyRequestBodyLimitTokens = Math.floor(maxRequestBodySize / BYTES_PER_TOKEN) - queryTokens - systemPromptTokens;
 
-  // Лимит контекстного окна модели (оставляем 20% для ответа)
   const modelLimitTokens = Math.floor(modelContextWindow * 0.8) - queryTokens - systemPromptTokens;
 
-  // Выбираем минимальный лимит для каждой переменной отдельно
   const contextLimit = Math.min(
     difyInputVariableLimitTokens,
     difyRequestBodyLimitTokens,
@@ -118,16 +103,10 @@ function calculateLimits(contextTokens, historyTokens, queryTokens) {
 }
 
 /**
- * Обрезка контекста с учетом приоритетов
- * @param {Array} adminChunks - Чанки из административной базы знаний
- * @param {Array} historyChunks - Чанки из базы истории тикетов
- * @param {string} modelName - Имя модели
- * @param {number} contextLimit - Лимит токенов для контекста
- * @param {string} jobId - ID задачи для логирования
- * @returns {Object} Объект с обрезанными чанками и информацией об обрезке
+ * Обрезает контекст с учетом приоритетов: сначала удаляет historyChunks, затем обрезает содержимое adminChunks
+ * Используется в: src/workers/fastLaneWorker.js (handleGenResponse) - для обрезки контекста при превышении лимитов токенов
  */
 function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId) {
-  // Шаг 1: Один раз токенизируем все чанки и сохраняем количество токенов
   const adminChunksWithTokens = adminChunks.map(chunk => {
     const content = chunk.content || chunk.text || '';
     const tokens = tokenCounter.countTokens(content, modelName);
@@ -140,20 +119,16 @@ function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId
     return { ...chunk, tokens };
   });
 
-  // Вычисляем токены заголовков и форматирования assembleContext
-  // Заголовки: "## Контекст из базы знаний\n\n### Административная база\n\n" и "\n\n### История тикетов\n\n"
   const adminHeader = adminChunks.length > 0 ? '## Контекст из базы знаний\n\n### Административная база\n\n' : '';
   const historyHeader = historyChunks.length > 0 ? '\n\n### История тикетов\n\n' : '';
   const adminHeaderTokens = adminChunks.length > 0 ? tokenCounter.countTokens(adminHeader, modelName) : 0;
   const historyHeaderTokens = historyChunks.length > 0 ? tokenCounter.countTokens(historyHeader, modelName) : 0;
   const headersTokens = adminHeaderTokens + historyHeaderTokens;
   
-  // Токены разделителей между чанками (пустая строка "\n\n" между каждым чанком)
   const separatorTokens = tokenCounter.countTokens('\n\n', modelName);
   const adminSeparatorsTokens = adminChunks.length > 0 ? separatorTokens * (adminChunks.length - 1) : 0;
   const historySeparatorsTokens = historyChunks.length > 0 ? separatorTokens * (historyChunks.length - 1) : 0;
 
-  // Вычисляем суммарное количество токенов
   const adminTokensSum = adminChunksWithTokens.reduce((sum, chunk) => sum + chunk.tokens, 0);
   const historyTokensSum = historyChunksWithTokens.reduce((sum, chunk) => sum + chunk.tokens, 0);
   let currentTotal = headersTokens + adminTokensSum + adminSeparatorsTokens + historyTokensSum + historySeparatorsTokens;
@@ -169,7 +144,6 @@ function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId
     trimmedAdminChunks: false,
   };
 
-  // Если контекст не превышает лимит, возвращаем как есть
   if (currentTotal <= contextLimit) {
     const prunedContext = assembleContext(adminChunks, historyChunks);
     return {
@@ -180,19 +154,15 @@ function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId
     };
   }
 
-  // Шаг 2: Работаем с копиями массивов для обрезки
   let prunedAdminChunks = adminChunksWithTokens.map(chunk => ({ ...chunk }));
   let prunedHistoryChunks = historyChunksWithTokens.map(chunk => ({ ...chunk }));
 
-  // Шаг 3: Обрезаем historyChunks с конца массива
   while (prunedHistoryChunks.length > 0 && currentTotal > contextLimit) {
     const removedChunk = prunedHistoryChunks.pop();
     currentTotal -= removedChunk.tokens;
-    // Учитываем удаление разделителя между чанками истории, если остались чанки
     if (prunedHistoryChunks.length > 0) {
       currentTotal -= separatorTokens;
     } else {
-      // Если удалили последний historyChunk, удаляем заголовок истории
       if (historyChunks.length > 0) {
         currentTotal -= historyHeaderTokens;
       }
@@ -200,12 +170,9 @@ function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId
     pruningInfo.removedHistoryChunks++;
   }
 
-  // Шаг 4: Если после удаления всех historyChunks лимит все еще превышен,
-  // обрезаем содержимое отдельных чанков из adminChunks (с конца текста)
   if (currentTotal > contextLimit && prunedAdminChunks.length > 0) {
     pruningInfo.trimmedAdminChunks = true;
 
-    // Обрезаем каждый чанк с конца, пока не уложимся в лимит
     for (let i = prunedAdminChunks.length - 1; i >= 0 && currentTotal > contextLimit; i--) {
       const chunk = prunedAdminChunks[i];
       const content = chunk.content || chunk.text || '';
@@ -214,24 +181,17 @@ function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId
         continue;
       }
 
-      // Вычисляем, сколько токенов нужно обрезать
       const tokensToRemove = currentTotal - contextLimit;
       const tokensToKeep = Math.max(0, chunk.tokens - tokensToRemove);
 
-      // Приблизительно вычисляем, сколько символов оставить
-      // Консервативная оценка: 1 токен ≈ 4 символа
       const charsToKeep = Math.floor((tokensToKeep / chunk.tokens) * content.length);
 
-      // Обрезаем чанк
       const trimmedContent = content.substring(0, Math.max(0, charsToKeep));
       
-      // Пересчитываем токены только для этого одного обрезанного чанка
       const trimmedTokens = tokenCounter.countTokens(trimmedContent, modelName);
       
-      // Обновляем текущую сумму токенов
       currentTotal = currentTotal - chunk.tokens + trimmedTokens;
       
-      // Обновляем чанк
       prunedAdminChunks[i] = {
         ...chunk,
         content: trimmedContent,
@@ -241,20 +201,16 @@ function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId
     }
   }
 
-  // Шаг 5: Вызываем assembleContext только один раз в самом конце
-  // Преобразуем чанки обратно в исходный формат (убираем поле tokens)
   const finalAdminChunks = prunedAdminChunks.map(({ tokens, ...chunk }) => chunk);
   const finalHistoryChunks = prunedHistoryChunks.map(({ tokens, ...chunk }) => chunk);
   const prunedContext = assembleContext(finalAdminChunks, finalHistoryChunks);
 
-  // Финальная проверка токенов (опционально, для точности)
   const finalTokens = tokenCounter.countTokens(prunedContext, modelName);
   
   pruningInfo.prunedAdminChunksCount = finalAdminChunks.length;
   pruningInfo.prunedHistoryChunksCount = finalHistoryChunks.length;
   pruningInfo.prunedTokens = finalTokens;
 
-  // Логирование обрезки
   if (pruningInfo.removedHistoryChunks > 0 || pruningInfo.trimmedAdminChunks) {
     logger.warn('CMD_GEN_RESPONSE: Context pruned', {
       jobId,
@@ -276,12 +232,8 @@ function pruneContext(adminChunks, historyChunks, modelName, contextLimit, jobId
 }
 
 /**
- * Обрезка истории при превышении лимита
- * @param {string} history - История в формате Markdown
- * @param {string} modelName - Имя модели
- * @param {number} historyLimit - Лимит токенов для истории
- * @param {string} jobId - ID задачи для логирования
- * @returns {Object} Объект с обрезанной историей и информацией об обрезке
+ * Обрезает историю тикета при превышении лимита токенов, удаляя старые сообщения с конца
+ * Используется в: src/workers/fastLaneWorker.js (handleGenResponse) - для обрезки истории при превышении лимитов токенов
  */
 function pruneHistory(history, modelName, historyLimit, jobId) {
   const originalTokens = tokenCounter.countTokens(history, modelName);
@@ -297,18 +249,13 @@ function pruneHistory(history, modelName, historyLimit, jobId) {
     };
   }
 
-  // Обрезаем историю с конца (удаляем старые сообщения)
-  // Приблизительно вычисляем, сколько символов оставить
   const charsToKeep = Math.floor((historyLimit / originalTokens) * history.length);
 
-  // Обрезаем строку с конца
   let prunedHistory = history.substring(0, Math.max(0, charsToKeep));
 
-  // Пытаемся обрезать по границам сообщений (по строкам "Role: content")
   const lines = prunedHistory.split('\n');
   const rolePattern = /^(User|Assistant|user|assistant):\s+.+$/;
 
-  // Удаляем последние строки, которые не являются началом сообщения
   while (lines.length > 0 && !rolePattern.test(lines[lines.length - 1]?.trim())) {
     lines.pop();
   }
@@ -316,7 +263,6 @@ function pruneHistory(history, modelName, historyLimit, jobId) {
   prunedHistory = lines.join('\n');
   const prunedTokens = tokenCounter.countTokens(prunedHistory, modelName);
 
-  // Логирование обрезки
   logger.warn('CMD_GEN_RESPONSE: History pruned', {
     jobId,
     reason: 'History limit exceeded',
@@ -336,10 +282,8 @@ function pruneHistory(history, modelName, historyLimit, jobId) {
 }
 
 /**
- * Обработчик задачи CMD_GEN_RESPONSE
- * Полный цикл External RAG: поиск -> сборка контекста -> обрезка -> генерация -> извлечение usage -> возврат результата
- * @param {Job} job - Задача из BullMQ
- * @returns {Promise<void>}
+ * Обрабатывает задачу CMD_GEN_RESPONSE: выполняет External RAG (поиск, сборка контекста, обрезка, генерация ответа)
+ * Используется в: src/workers/fastLaneWorker.js (fastLaneWorker) - для обработки запросов на генерацию ответов с RAG
  */
 async function handleGenResponse(job) {
   const startTime = Date.now();
@@ -352,7 +296,6 @@ async function handleGenResponse(job) {
     query: query?.substring(0, 50),
   });
 
-  // Этап 1 (Подготовка): Параллельное выполнение независимых операций
   const [simplificationResult, adminKbId, historyKbId] = await Promise.all([
     difyApi.simplifyUserQuery(query, orgId),
     OrganizationService.ensureAdminKb(orgId),
@@ -376,35 +319,28 @@ async function handleGenResponse(job) {
       promptTokens: simplificationUsage.prompt_tokens,
       completionTokens: simplificationUsage.completion_tokens,
       totalTokens: simplificationUsage.total_tokens,
-    },
-  });
+    });
 
-    // Этап 2 (Поиск): Параллельное выполнение поиска в обеих базах знаний
     const adminKey = config.dify.keys.admin;
     if (!adminKey) {
       throw new Error('Dify admin key is not configured');
     }
 
-    // Формируем массив промисов поиска
     const searchPromises = [
       adminKbId ? difyApi.retrieve(adminKbId, processedQuery) : Promise.resolve([]),
       historyKbId ? difyApi.retrieveChunks(adminKey, historyKbId, processedQuery, 5) : Promise.resolve([])
     ];
 
-    // Выполняем поиск параллельно с обработкой ошибок (Promise.allSettled)
     const [adminResult, historyResult] = await Promise.allSettled(searchPromises);
 
-    // Обработка результатов поиска
     let context = '';
-    let retrievedRecords = []; // Хранилище сырых данных контекста
+    let retrievedRecords = [];
     let historyChunks = [];
 
-    // Обработка результата поиска в административной базе знаний
     if (adminResult.status === 'fulfilled' && adminKbId) {
       try {
         const results = adminResult.value;
         
-        // Логируем полную структуру ответа для диагностики
         logger.info(`CMD_GEN_RESPONSE: Retrieve results`, {
           jobId: job.id,
           orgId,
@@ -417,21 +353,16 @@ async function handleGenResponse(job) {
           query: query.substring(0, 50),
         });
         
-        // Обрабатываем разные форматы ответа от Dify API
         let records = [];
         if (Array.isArray(results)) {
-          // Если ответ - массив, используем его напрямую
           records = results;
         } else if (results && results.records && Array.isArray(results.records)) {
-          // Если ответ - объект с полем records
           records = results.records;
         } else if (results && results.data && Array.isArray(results.data)) {
-          // Если ответ - объект с полем data
           records = results.data;
         }
         
         if (records && records.length > 0) {
-          // Формируем retrievedRecords с информацией об источнике и документе
           retrievedRecords = records.map(record => {
             const recordData = {
               content: record.segment?.content || record.content || '',
@@ -439,8 +370,6 @@ async function handleGenResponse(job) {
               source: 'admin_kb',
             };
             
-            // Добавляем имя документа, если доступно
-            // Проверяем разные возможные пути к имени документа в ответе Dify API
             const documentName = 
               record.document?.name || 
               record.document?.file_name || 
@@ -454,7 +383,6 @@ async function handleGenResponse(job) {
             return recordData;
           }).filter(item => item.content.trim().length > 0);
           
-          // Логируем структуру первого record для отладки
           if (records.length > 0) {
             logger.debug('CMD_GEN_RESPONSE: First record structure', {
               jobId: job.id,
@@ -466,7 +394,6 @@ async function handleGenResponse(job) {
             });
           }
 
-          // Склеиваем сегменты в строку контекста
           context = records
             .map(r => r.segment?.content || r.content || '')
             .filter(content => content.trim().length > 0)
@@ -499,7 +426,6 @@ async function handleGenResponse(job) {
           adminKbId,
           error: error.message,
         });
-        // Продолжаем с пустым контекстом (graceful degradation)
       }
     } else if (adminResult.status === 'rejected') {
       logger.warn('CMD_GEN_RESPONSE: RAG Retrieval failed, continuing without context', {
@@ -508,7 +434,6 @@ async function handleGenResponse(job) {
         adminKbId,
         error: adminResult.reason?.message || adminResult.reason,
       });
-      // Продолжаем с пустым контекстом (graceful degradation)
     } else if (!adminKbId) {
       logger.info('CMD_GEN_RESPONSE: No admin knowledge base available', {
         jobId: job.id,
@@ -516,12 +441,10 @@ async function handleGenResponse(job) {
       });
     }
 
-    // Обработка результата поиска в базе истории тикетов
     if (historyResult.status === 'fulfilled' && historyKbId) {
       try {
         historyChunks = historyResult.value;
         
-        // Преобразуем historyChunks в формат retrievedRecords и объединяем с результатами из adminKb
         if (historyChunks && historyChunks.length > 0) {
           const historyRecords = historyChunks.map(chunk => {
             const recordData = {
@@ -530,8 +453,6 @@ async function handleGenResponse(job) {
               source: 'history_kb',
             };
             
-            // Добавляем имя документа, если доступно
-            // Проверяем разные возможные пути к имени документа в ответе Dify API
             const documentName = 
               chunk.document?.name || 
               chunk.document?.file_name || 
@@ -545,7 +466,6 @@ async function handleGenResponse(job) {
             return recordData;
           }).filter(item => item.content.trim().length > 0);
           
-          // Объединяем результаты из adminKb и historyKb
           retrievedRecords = [...retrievedRecords, ...historyRecords];
           
           logger.info('CMD_GEN_RESPONSE: History chunks added to retrievedRecords', {
@@ -563,7 +483,6 @@ async function handleGenResponse(job) {
           historyKbId,
           error: error.message,
         });
-        // Graceful degradation: продолжаем с пустым массивом
       }
     } else if (historyResult.status === 'rejected') {
       logger.warn('CMD_GEN_RESPONSE: Error retrieving history chunks', {
@@ -572,10 +491,8 @@ async function handleGenResponse(job) {
         historyKbId,
         error: historyResult.reason?.message || historyResult.reason,
       });
-      // Graceful degradation: продолжаем с пустым массивом
     }
     
-    // Логируем итоговое состояние retrievedRecords перед обрезкой контекста
     logger.info('CMD_GEN_RESPONSE: RetrievedRecords before context pruning', {
       jobId: job.id,
       orgId,
@@ -610,7 +527,6 @@ async function handleGenResponse(job) {
 
     const formattedHistory = historyFormatter.formatTicketHistory(history);
 
-    // Шаг 4: Подсчет токенов и проверка лимитов
     const modelName = config.model.name;
     const tokenCounts = tokenCounter.estimateTotalTokens(
       rawContext,
@@ -628,7 +544,6 @@ async function handleGenResponse(job) {
       totalTokens: tokenCounts.total,
     });
 
-    // Шаг 5: Context Pruning - обрезка контекста и истории при превышении лимитов
     const limits = calculateLimits(
       tokenCounts.context,
       tokenCounts.history,
@@ -658,7 +573,6 @@ async function handleGenResponse(job) {
       });
     }
 
-    // Создаем prunedContextResult для совместимости с остальным кодом
     const prunedContextResult = {
       context: prunedContext,
       adminChunks: [], // Пустой массив для совместимости
@@ -675,7 +589,6 @@ async function handleGenResponse(job) {
       }
     };
 
-    // Обрезка истории
     const prunedHistoryResult = pruneHistory(
       formattedHistory,
       modelName,
@@ -683,7 +596,6 @@ async function handleGenResponse(job) {
       job.id
     );
 
-    // Логирование результатов обрезки
     if (
       prunedContextResult.pruningInfo.removedHistoryChunks > 0 ||
       prunedContextResult.pruningInfo.trimmedAdminChunks ||
@@ -707,7 +619,6 @@ async function handleGenResponse(job) {
       });
     }
 
-    // Шаг 5: Generation - вызов Dify Workflow для генерации ответа
     const workflowKey = config.dify.keys.responseWorkflow;
     if (!workflowKey) {
       throw new Error('Dify response workflow key is not configured');
@@ -720,15 +631,13 @@ async function handleGenResponse(job) {
       historyLength: prunedHistoryResult.history.length,
     });
 
-    // Вызов Workflow с отформатированными переменными
     const workflowInputs = {
       query,
       history: prunedHistoryResult.history,
       context: prunedContextResult.context,
-      lang, // Исправлено: имя переменной в workflow 'lang', а не 'language'
+      lang,
     };
 
-    // Получаем ответ от Dify Workflow
     let workflowOutputs;
 
     try {
@@ -741,17 +650,13 @@ async function handleGenResponse(job) {
         stack: workflowError.stack,
       });
 
-      // Обработка ошибок с инвалидацией кэша при необходимости
       await handleDifyResourceError(workflowError, orgId);
 
-      // Отправка ошибки в resultQueue
       await sendResult('CMD_GEN_RESPONSE', createErrorPayload(workflowError, meta), meta);
 
-      // Выбрасываем ошибку для BullMQ retry стратегии
       throw workflowError;
     }
 
-    // Шаг 6: Extract Usage - извлечение usage через BillingService
     const generationUsage = BillingService.extractUsage(workflowOutputs);
 
     logger.info('CMD_GEN_RESPONSE: Generation usage extracted', {
@@ -763,7 +668,6 @@ async function handleGenResponse(job) {
       ...(generationUsage.model && { model: generationUsage.model }),
     });
 
-    // Шаг 7: Accumulate Usage - суммирование токенов из всех этапов
     const totalUsage = BillingService.accumulateUsage([simplificationUsage, generationUsage]);
 
     logger.info('CMD_GEN_RESPONSE: Usage stages collected', {
@@ -772,9 +676,6 @@ async function handleGenResponse(job) {
       stages: totalUsage.stages.length,
     });
 
-    // Шаг 7: Extract text and sources - извлечение текста ответа и источников
-    // Структура ответа Dify Workflow может варьироваться
-    // Обычно текст находится в outputs.text или outputs.output
     const outputs =
       workflowOutputs.outputs ||
       workflowOutputs.data?.outputs ||
@@ -791,14 +692,12 @@ async function handleGenResponse(job) {
       workflowOutputs.response ||
       '';
 
-    // Источники могут быть в outputs.sources или outputs.references
     const sources =
       workflowOutputs.sources ||
       workflowOutputs.references ||
       workflowOutputs.documents ||
       [];
 
-    // Если источники не найдены, используем информацию из чанков
     const fallbackSources = [
       ...prunedContextResult.adminChunks.map((chunk) => ({
         dataset_id: adminKbId,
@@ -818,7 +717,6 @@ async function handleGenResponse(job) {
 
     const finalSources = sources.length > 0 ? sources : fallbackSources;
 
-    // Шаг 8: Return Result - отправка финального результата в resultQueue
     logger.info(`CMD_GEN_RESPONSE: Returning result`, {
       jobId: job.id,
       orgId,
@@ -827,26 +725,22 @@ async function handleGenResponse(job) {
       contextLength: prunedContextResult.context.length,
     });
 
-    // Формирование usage для meta
     const usageData = {
-      ...(totalUsage.model && { model: totalUsage.model }), // Включаем только если модель известна
+      ...(totalUsage.model && { model: totalUsage.model }),
       stages: totalUsage.stages,
     };
 
-    // Форматирование ответа в стандартизированном формате
-    // Переименовываем text → content
     const result = formatSuccess(
       {
         content: text,
         ...(finalSources.length > 0 && { sources: finalSources }),
-        retrievedContext: retrievedRecords, // Возвращаем сырые данные контекста
+        retrievedContext: retrievedRecords,
       },
       meta,
       job.id,
       startTime
     );
 
-    // Логируем финальный результат перед отправкой
     logger.info('CMD_GEN_RESPONSE: Final result structure', {
       jobId: job.id,
       orgId,
@@ -859,10 +753,8 @@ async function handleGenResponse(job) {
       resultData: trimLogObject(result.data),
     });
 
-    // Добавляем usage в meta
     result.meta.usage = usageData;
 
-    // Передаем result.meta вместо исходного meta, чтобы сохранить usage
     await sendResult('CMD_GEN_RESPONSE', result, result.meta);
 
     logger.info('CMD_GEN_RESPONSE: Final result sent to result queue', {
@@ -875,16 +767,13 @@ async function handleGenResponse(job) {
 }
 
 /**
- * Обработчик задачи CMD_ANALYZE_NEW_TICKET
- * Анализ нового тикета: классификация и определение настроения
- * @param {Job} job - Задача из BullMQ
- * @returns {Promise<void>}
+ * Обрабатывает задачу CMD_ANALYZE_NEW_TICKET: классифицирует тикет и определяет настроение
+ * Используется в: src/workers/fastLaneWorker.js (fastLaneWorker) - для анализа новых тикетов
  */
 async function handleAnalyzeNewTicket(job) {
   const startTime = Date.now();
   const meta = job.data?.meta || {};
   
-  // Нормализация входных данных с поддержкой обратной совместимости
   const text = extractContent(job.data) || job.data?.text;
   const targetLang = extractTargetLang(job.data) || job.data?.targetLanguage || 'ru';
 
@@ -899,7 +788,6 @@ async function handleAnalyzeNewTicket(job) {
       throw new Error('Dify classifier key is not configured');
     }
 
-    // Вызов Workflow Classifier
     const workflowInputs = {
       message: text,
       lang: targetLang, // Имя переменной для workflow API
@@ -911,13 +799,11 @@ async function handleAnalyzeNewTicket(job) {
       meta.user || 'system'
     );
 
-    // Логируем сырой ответ от workflow для диагностики формата
     logger.info('CMD_ANALYZE_NEW_TICKET: raw workflow output', {
       jobId: job.id,
       raw: workflowOutputs,
     });
 
-    // Извлечение usage через BillingService
     const workflowResponse = workflowOutputs;
 
     const usage = BillingService.extractUsage(workflowResponse);
@@ -930,7 +816,6 @@ async function handleAnalyzeNewTicket(job) {
       ...(usage.model && { model: usage.model }),
     });
 
-    // Парсинг JSON ответа: учитываем разные расположения outputs
     const outputs =
       workflowOutputs.outputs ||
       workflowOutputs.data?.outputs ||
@@ -964,7 +849,6 @@ async function handleAnalyzeNewTicket(job) {
       throw new Error('Invalid response: missing or invalid sentiment field');
     }
 
-    // Валидация значения sentiment
     const validSentiments = ['positive', 'neutral', 'negative'];
     if (!validSentiments.includes(parsed.sentiment.toLowerCase())) {
       logger.warn('CMD_ANALYZE_NEW_TICKET: Invalid sentiment value', {
@@ -973,7 +857,6 @@ async function handleAnalyzeNewTicket(job) {
       });
     }
 
-    // Формирование usage для meta
     const usageData = {
       ...(usage.model && { model: usage.model }),
       stages: [{
@@ -983,7 +866,6 @@ async function handleAnalyzeNewTicket(job) {
       }],
     };
 
-    // Форматирование ответа в стандартизированном формате
     const result = formatSuccess(
       {
         title: parsed.title,
@@ -994,7 +876,6 @@ async function handleAnalyzeNewTicket(job) {
       startTime
     );
 
-    // Добавляем usage в meta
     result.meta.usage = usageData;
 
     await sendResult('CMD_ANALYZE_NEW_TICKET', result, meta);
@@ -1007,16 +888,13 @@ async function handleAnalyzeNewTicket(job) {
 }
 
 /**
- * Обработчик задачи CMD_TRANSLATE
- * Перевод текста на целевой язык через специализированный translator workflow
- * @param {Job} job - Задача из BullMQ
- * @returns {Promise<void>}
+ * Обрабатывает задачу CMD_TRANSLATE: переводит текст на целевой язык через Dify translator workflow
+ * Используется в: src/workers/fastLaneWorker.js (fastLaneWorker) - для перевода текста
  */
 async function handleTranslate(job) {
   const startTime = Date.now();
   const meta = job.data?.meta || {};
   
-  // Нормализация входных данных с поддержкой обратной совместимости
   const text = extractContent(job.data) || job.data?.text;
   const targetLang = extractTargetLang(job.data) || job.data?.targetLang || job.data?.lang || 'en';
 
@@ -1026,26 +904,19 @@ async function handleTranslate(job) {
     targetLang,
   });
 
-  // Используем специализированный translator ключ
   const workflowKey = config.dify.keys.translator;
   if (!workflowKey) {
     throw new Error('Dify translator key is not configured');
   }
 
-  // Для translator workflow используем sendChatMessage с правильными параметрами
-  // Согласно YAML: query содержит текст для перевода, inputs содержит lang
   const inputs = {
     lang: targetLang
   };
 
-  // Вызываем Dify Chat API для перевода
   const result = await difyApi.sendChatMessage(workflowKey, text, inputs, meta.user || 'system');
 
-  // Извлекаем переведенный текст из результата
-  // sendChatMessage возвращает результат в answer
   const translatedText = result.answer || result.data?.answer || '';
 
-  // Извлечение usage через BillingService
   const usage = BillingService.extractUsage(result);
 
   logger.info('CMD_TRANSLATE: Translation completed', {
@@ -1055,10 +926,9 @@ async function handleTranslate(job) {
     targetLang: inputs.lang,
     promptTokens: usage.prompt_tokens,
     completionTokens: usage.completion_tokens,
-    ...(usage.model && { model: usage.model }),
-  });
+      ...(usage.model && { model: usage.model }),
+    });
 
-  // Формирование usage для meta
   const usageData = {
     ...(usage.model && { model: usage.model }),
     stages: [{
@@ -1068,8 +938,6 @@ async function handleTranslate(job) {
     }],
   };
 
-  // Форматирование ответа в стандартизированном формате
-  // Унифицируем поля: original → sourceContent, translated → content
   const responseResult = formatSuccess(
     {
       content: translatedText,
@@ -1081,18 +949,14 @@ async function handleTranslate(job) {
     startTime
   );
 
-  // Добавляем usage в meta
   responseResult.meta.usage = usageData;
 
-  // Передаем responseResult.meta вместо исходного meta, чтобы сохранить usage
   await sendResult('CMD_TRANSLATE', responseResult, responseResult.meta);
 }
 
 /**
- * Обработчик задачи CMD_KB_LIST_FILES
- * Получение списка файлов из базы знаний организации
- * @param {Job} job - Задача из BullMQ
- * @returns {Promise<void>}
+ * Обрабатывает задачу CMD_KB_LIST_FILES: получает список файлов из базы знаний организации
+ * Используется в: src/workers/fastLaneWorker.js (fastLaneWorker) - для получения списка файлов в базе знаний
  */
 async function handleKbListFiles(job) {
   const startTime = Date.now();
@@ -1114,14 +978,12 @@ async function handleKbListFiles(job) {
       const kbIds = await OrganizationService.getKbIdsOrThrow(orgId);
       adminKbId = kbIds.adminKbId;
     } catch (error) {
-      // Если база не найдена, возвращаем пустой массив (это нормально, база еще не создана)
       if (error instanceof KbNotFoundError) {
         logger.info('CMD_KB_LIST_FILES: Knowledge base not found, returning empty list', {
           jobId: job.id,
           orgId,
         });
 
-        // Используем wrapArray для обертки пустого массива
         const result = formatSuccess(
           wrapArray([]),
           meta,
@@ -1135,7 +997,6 @@ async function handleKbListFiles(job) {
       throw error;
     }
 
-    // Получение списка документов
     const documentsResponse = await difyApi.listDocuments(adminKey, adminKbId, 1, 100);
 
     const files = (documentsResponse.data || []).map((doc) => ({
@@ -1165,10 +1026,8 @@ async function handleKbListFiles(job) {
 }
 
 /**
- * Обработчик задачи CMD_KB_DELETE_FILE
- * Удаление файла из базы знаний организации
- * @param {Job} job - Задача из BullMQ
- * @returns {Promise<void>}
+ * Обрабатывает задачу CMD_KB_DELETE_FILE: удаляет файл из базы знаний организации
+ * Используется в: src/workers/fastLaneWorker.js (fastLaneWorker) - для удаления файлов из базы знаний
  */
 async function handleKbDeleteFile(job) {
   const startTime = Date.now();
@@ -1186,19 +1045,15 @@ async function handleKbDeleteFile(job) {
       throw new Error('Dify admin key is not configured');
     }
 
-    // Получение adminKbId
     const kbIds = await OrganizationService.getKbIdsOrThrow(orgId);
     const adminKbId = kbIds.adminKbId;
 
-    // Удаление документа
     await difyApi.deleteDocument(adminKey, adminKbId, fileId);
 
-    // Форматирование ответа в стандартизированном формате
-    // Переименовываем fileId → documentId
     const result = formatSuccess(
       {
         deleted: true,
-        documentId: fileId, // Унифицированное название
+        documentId: fileId,
       },
       meta,
       job.id,
@@ -1215,9 +1070,8 @@ async function handleKbDeleteFile(job) {
 }
 
 /**
- * Fast Lane Worker - маршрутизация задач
- * @param {Job} job - Задача из BullMQ
- * @returns {Promise<any>} Результат выполнения задачи
+ * Обрабатывает задачи Fast Lane (интерактивные): маршрутизирует задачи к соответствующим обработчикам
+ * Используется в: src/infrastructure/bullmq/index.js (initWorkers) - как процессор для Fast Lane Worker
  */
 async function fastLaneWorker(job) {
   logger.info('Fast Lane job processing', {
@@ -1226,7 +1080,6 @@ async function fastLaneWorker(job) {
     data: job.data,
   });
 
-  // Маршрутизация задач через switch
   switch (job.name) {
     case 'CMD_GEN_RESPONSE':
       return await handleGenResponse(job);
@@ -1252,7 +1105,6 @@ async function fastLaneWorker(job) {
   }
 }
 
-// Экспортируем функции для тестирования
 module.exports = createSafeProcessor('FastLane', fastLaneWorker);
 module.exports.assembleContext = assembleContext;
 module.exports.calculateLimits = calculateLimits;

@@ -1,9 +1,6 @@
 /**
- * Кастомные классы ошибок для приложения
- */
-
-/**
- * Ошибка API Dify
+ * Ошибка API Dify с деталями HTTP ответа
+ * Используется в: src/infrastructure/dify/client.js, src/utils/errorHandler.js
  */
 class DifyApiError extends Error {
   constructor(message, statusCode, difyCode, url) {
@@ -13,13 +10,13 @@ class DifyApiError extends Error {
     this.difyCode = difyCode;
     this.url = url;
 
-    // Сохраняет правильный стек для ошибки
     Error.captureStackTrace(this, this.constructor);
   }
 }
 
 /**
- * Ошибка отсутствия базы знаний
+ * Ошибка отсутствия базы знаний для организации
+ * Используется в: src/services/OrganizationService.js, src/utils/errorHandler.js
  */
 class KbNotFoundError extends Error {
   constructor(orgId) {
@@ -28,7 +25,6 @@ class KbNotFoundError extends Error {
     this.orgId = orgId;
     this.code = 'KB_NOT_FOUND';
 
-    // Сохраняет правильный стек для ошибки
     Error.captureStackTrace(this, this.constructor);
   }
 }

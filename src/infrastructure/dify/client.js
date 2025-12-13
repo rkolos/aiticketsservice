@@ -11,7 +11,10 @@ const agentOptions = { keepAlive: true, maxSockets: 100, maxFreeSockets: 10 };
 const httpAgent = new http.Agent(agentOptions);
 const httpsAgent = new https.Agent(agentOptions);
 
-// Создание настроенного инстанса Axios для Dify API
+/**
+ * Настроенный инстанс Axios для работы с Dify API
+ * Используется в: src/infrastructure/dify/api.js - для всех HTTP запросов к Dify API
+ */
 const difyClient = axios.create({
   baseURL: config.dify.url,
   timeout: 60000, // 60 секунд - LLM могут отвечать долго
