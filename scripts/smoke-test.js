@@ -391,6 +391,7 @@ if (!process.env.REDIS_HOST || process.env.REDIS_HOST === 'redis') {
 const { Queue, Worker } = require('bullmq');
 const Redis = require('ioredis');
 const crypto = require('crypto');
+const http = require('http');
 const { QUEUES } = require('../src/core/constants');
 const config = require('../src/config');
 const difyApi = require('../src/infrastructure/dify/api');
@@ -880,6 +881,126 @@ function sleep(ms) {
 }
 
 /**
+ * Проверка healthcheck сервиса (HTTP API: Healthcheck)
+ * @returns {Promise<boolean>} true если healthcheck доступен и возвращает healthy
+ */
+async function checkHealthcheck() {
+  try {
+    const port = config.healthcheck.port;
+    const url = `http://localhost:${port}/health`;
+
+    console.log(colorize(`Checking Healthcheck API at ${url}...`, 'yellow'));
+
+    return new Promise((resolve) => {
+      const timeoutPromise = setTimeout(() => {
+        console.error(colorize(`\n❌ Healthcheck API timeout (5s)`, 'red'));
+        console.error(colorize(`   URL: ${url}`, 'yellow'));
+        console.error(colorize('Please ensure healthcheck server is running', 'yellow'));
+        resolve(false);
+      }, 5000);
+
+      const req = http.get(url, (res) => {
+        let data = '';
+
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          clearTimeout(timeoutPromise);
+
+          if (res.statusCode === 200) {
+            try {
+              const response = JSON.parse(data);
+              
+              // Выводим полный JSON ответ
+              console.log(colorize('   Full Healthcheck Response:', 'cyan'));
+              console.log(JSON.stringify(response, null, 2));
+              console.log('');
+              
+              if (response.status === 'healthy') {
+                console.log(colorize(`✓ Healthcheck API is healthy\n`, 'green'));
+                if (response.checks) {
+                  console.log('   Checks:');
+                  if (response.checks.redis) {
+                    console.log(`     Redis: ${response.checks.redis.status}`);
+                  }
+                  if (response.checks.dify) {
+                    console.log(`     Dify: ${response.checks.dify.status}`);
+                  }
+                  if (response.checks.workers) {
+                    if (response.checks.workers.fastLane) {
+                      console.log(`     FastLane Worker: ${response.checks.workers.fastLane.status}`);
+                    }
+                    if (response.checks.workers.slowLane) {
+                      console.log(`     SlowLane Worker: ${response.checks.workers.slowLane.status}`);
+                    }
+                  }
+                }
+                resolve(true);
+              } else {
+                console.error(colorize(`\n❌ Healthcheck API returned unhealthy status`, 'red'));
+                console.error(colorize(`   Status: ${response.status}`, 'yellow'));
+                if (response.checks) {
+                  console.error('   Failed checks:');
+                  Object.entries(response.checks).forEach(([key, check]) => {
+                    if (check.status && check.status !== 'ok') {
+                      console.error(`     ${key}: ${check.status} - ${check.message || ''}`);
+                    } else if (check.fastLane || check.slowLane) {
+                      // Для workers
+                      if (check.fastLane && check.fastLane.status !== 'ok') {
+                        console.error(`     fastLane: ${check.fastLane.status} - ${check.fastLane.message || ''}`);
+                      }
+                      if (check.slowLane && check.slowLane.status !== 'ok') {
+                        console.error(`     slowLane: ${check.slowLane.status} - ${check.slowLane.message || ''}`);
+                      }
+                    }
+                  });
+                }
+                resolve(false);
+              }
+            } catch (parseError) {
+              console.error(colorize(`\n❌ Healthcheck API returned invalid JSON`, 'red'));
+              console.error(colorize(`   Response: ${data.substring(0, 200)}`, 'yellow'));
+              resolve(false);
+            }
+          } else {
+            clearTimeout(timeoutPromise);
+            console.error(colorize(`\n❌ Healthcheck API returned status ${res.statusCode}`, 'red'));
+            console.error(colorize(`   URL: ${url}`, 'yellow'));
+            resolve(false);
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        clearTimeout(timeoutPromise);
+        if (error.code === 'ECONNREFUSED') {
+          console.error(colorize(`\n❌ Cannot connect to Healthcheck API at ${url}`, 'red'));
+          console.error(colorize('Please ensure healthcheck server is running', 'yellow'));
+        } else {
+          console.error(colorize(`\n❌ Healthcheck API error: ${error.message}`, 'red'));
+        }
+        resolve(false);
+      });
+
+      req.setTimeout(5000, () => {
+        req.destroy();
+        clearTimeout(timeoutPromise);
+        console.error(colorize(`\n❌ Healthcheck API request timeout`, 'red'));
+        resolve(false);
+      });
+    });
+  } catch (error) {
+    console.error(colorize(`\n❌ Healthcheck API check failed: ${error.message}`, 'red'));
+    if (error.stack) {
+      console.error(colorize(`   Error: ${error.stack}`, 'red'));
+    }
+    return false;
+  }
+}
+
+/**
  * Проверка доступности Dify API
  * @returns {Promise<boolean>} true если API доступен
  */
@@ -1005,6 +1126,7 @@ async function main() {
 
   if (args.includes('--list-tests')) {
     console.log(colorize('\n📋 Доступные тесты:\n', 'bright'));
+    console.log(' 0. Healthcheck Service - Проверка healthcheck сервиса (HTTP API)');
     console.log(' 1. CMD_ANALYZE_NEW_TICKET - Анализ нового тикета');
     console.log(' 2. CMD_TRANSLATE - Перевод текста');
     console.log(' 3. CMD_KB_ADD_FILE (first) - Загрузка первого файла');
@@ -1021,6 +1143,14 @@ async function main() {
   }
 
   console.log(colorize('\n🚀 Starting E2E Smoke Test...', 'bright'));
+  
+  // TEST 0: Проверка healthcheck сервиса (нулевой тест)
+  console.log(colorize('\n--- [TEST 0/13: Healthcheck Service] ---', 'cyan'));
+  const isHealthcheckOk = await checkHealthcheck();
+  if (!isHealthcheckOk) {
+    console.error(colorize('\n❌ Healthcheck test failed. Aborting smoke test.', 'red'));
+    process.exit(1);
+  }
   
   // Создаем соединение Redis
   redisConnection = new Redis({
@@ -1114,7 +1244,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 1: CMD_ANALYZE_NEW_TICKET', 'yellow'));
     } else {
       const test1 = await runTest(
-        'TEST 1/12: Analyzing Ticket',
+        'TEST 1/13: Analyzing Ticket',
         'CMD_ANALYZE_NEW_TICKET',
         {
           text: 'У меня не работает вход в систему, ошибка 500',
@@ -1134,7 +1264,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 2: CMD_TRANSLATE', 'yellow'));
     } else {
       const test2 = await runTest(
-        'TEST 2/12: Translation',
+        'TEST 2/13: Translation',
         'CMD_TRANSLATE',
         {
           text: 'Welcome to the system',
@@ -1155,7 +1285,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 3: CMD_KB_ADD_FILE (first)', 'yellow'));
     } else {
       const test3 = await runTest(
-      'TEST 3/12: File Upload (Open WebUI README)',
+      'TEST 3/13: File Upload (Open WebUI README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
@@ -1204,7 +1334,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 4: CMD_KB_ADD_FILE (second)', 'yellow'));
     } else {
       const test4 = await runTest(
-      'TEST 4/12: File Upload (Alpaca WebUI README)',
+      'TEST 4/13: File Upload (Alpaca WebUI README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
@@ -1244,7 +1374,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 5: CMD_GEN_RESPONSE', 'yellow'));
     } else {
       const test5 = await runTest(
-      'TEST 5/12: Generating Response (RAG with uploaded files - WebUI comparison)',
+      'TEST 5/13: Generating Response (RAG with uploaded files - WebUI comparison)',
       'CMD_GEN_RESPONSE',
       {
         orgId: 'test-org-smoke',
@@ -1270,7 +1400,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 6: CMD_ARCHIVE_TICKET', 'yellow'));
     } else {
       const test6 = await runTest(
-      'TEST 6/12: Archiving Ticket',
+      'TEST 6/13: Archiving Ticket',
       'CMD_ARCHIVE_TICKET',
       {
         orgId: 'test-org-smoke',
@@ -1297,7 +1427,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 7: CMD_KB_LIST_FILES', 'yellow'));
     } else {
       const test7 = await runTest(
-      'TEST 7/12: List Files',
+      'TEST 7/13: List Files',
       'CMD_KB_LIST_FILES',
       {
         orgId: 'test-org-smoke',
@@ -1338,7 +1468,7 @@ async function main() {
       await sleep(1000);
       
       const test8 = await runTest(
-        'TEST 8/12: Delete File',
+        'TEST 8/13: Delete File',
         'CMD_KB_DELETE_FILE',
         {
           orgId: 'test-org-smoke',
@@ -1358,7 +1488,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 9: CMD_SYS_RESYNC_CACHE', 'yellow'));
     } else {
       const test9 = await runTest(
-      'TEST 9/12: Sync Cache',
+      'TEST 9/13: Sync Cache',
       'CMD_SYS_RESYNC_CACHE',
       {
         meta: {},
@@ -1377,7 +1507,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 10: CMD_UNKNOWN_COMMAND', 'yellow'));
     } else {
       const test10 = await runTest(
-      'TEST 10/12: Unknown Command (Error Handling)',
+      'TEST 10/13: Unknown Command (Error Handling)',
       'CMD_UNKNOWN_COMMAND',
       {
         orgId: 'test-org-smoke',
@@ -1398,7 +1528,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 10.5: CMD_РРРРРРР', 'yellow'));
     } else {
       const test10_5 = await runTest(
-      'TEST 10.5/12: Unknown Command with Cyrillic (CMD_РРРРРРР)',
+      'TEST 10.5/13: Unknown Command with Cyrillic (CMD_РРРРРРР)',
       'CMD_РРРРРРР',
       {
         orgId: 'test-org-smoke',
@@ -1419,7 +1549,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 11: CMD_CLEANUP_ORG', 'yellow'));
     } else {
       const test11 = await runTest(
-      'TEST 11/12: Cleanup Org',
+      'TEST 11/13: Cleanup Org',
       'CMD_CLEANUP_ORG',
       {
         orgId: 'test-org-smoke',
