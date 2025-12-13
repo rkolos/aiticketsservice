@@ -352,18 +352,26 @@ async function handleGenResponse(job) {
     query: query?.substring(0, 50),
   });
 
-  // Шаг 0: Query Simplification - упрощение запроса для улучшения RAG поиска
-  const simplificationResult = await difyApi.simplifyUserQuery(query, orgId);
+  // Этап 1 (Подготовка): Параллельное выполнение независимых операций
+  const [simplificationResult, adminKbId, historyKbId] = await Promise.all([
+    difyApi.simplifyUserQuery(query, orgId),
+    OrganizationService.ensureAdminKb(orgId),
+    OrganizationService.ensureHistoryKb(orgId)
+  ]);
+
+  // Извлекаем processedQuery из результата упрощения запроса
   const processedQuery = simplificationResult.query;
   const simplificationUsage = simplificationResult.usage;
 
-  logger.info('CMD_GEN_RESPONSE: Query simplified', {
+  logger.info('CMD_GEN_RESPONSE: Query simplified and knowledge base IDs retrieved', {
     jobId: job.id,
     orgId,
     originalLength: query.length,
     processedLength: processedQuery.length,
     originalQuery: query.substring(0, 50),
     processedQuery: processedQuery.substring(0, 50),
+    adminKbId,
+    historyKbId,
     simplificationUsage: {
       promptTokens: simplificationUsage.prompt_tokens,
       completionTokens: simplificationUsage.completion_tokens,
@@ -371,30 +379,30 @@ async function handleGenResponse(job) {
     },
   });
 
-    // Шаг 1: Identify Datasets - получение ID баз знаний
-    // Используем ensureAdminKb и ensureHistoryKb вместо getKbIdsOrThrow,
-    // чтобы гарантировать наличие баз знаний (lazy loading)
-    let adminKbId, historyKbId;
-    // Используем ensureAdminKb для гарантии наличия admin базы
-    adminKbId = await OrganizationService.ensureAdminKb(orgId);
-    // Используем ensureHistoryKb для гарантии наличия history базы
-    historyKbId = await OrganizationService.ensureHistoryKb(orgId);
+    // Этап 2 (Поиск): Параллельное выполнение поиска в обеих базах знаний
+    const adminKey = config.dify.keys.admin;
+    if (!adminKey) {
+      throw new Error('Dify admin key is not configured');
+    }
 
-    logger.info('CMD_GEN_RESPONSE: Knowledge base IDs retrieved', {
-      jobId: job.id,
-      orgId,
-      adminKbId,
-      historyKbId,
-    });
+    // Формируем массив промисов поиска
+    const searchPromises = [
+      adminKbId ? difyApi.retrieve(adminKbId, processedQuery) : Promise.resolve([]),
+      historyKbId ? difyApi.retrieveChunks(adminKey, historyKbId, processedQuery, 5) : Promise.resolve([])
+    ];
 
-    // Шаг 2: Retrieval - поиск контекста из базы знаний с Hybrid Search и Reranking
+    // Выполняем поиск параллельно с обработкой ошибок (Promise.allSettled)
+    const [adminResult, historyResult] = await Promise.allSettled(searchPromises);
+
+    // Обработка результатов поиска
     let context = '';
     let retrievedRecords = []; // Хранилище сырых данных контекста
+    let historyChunks = [];
 
-    // Поиск в административной базе знаний с Jina Reranker
-    if (adminKbId) {
+    // Обработка результата поиска в административной базе знаний
+    if (adminResult.status === 'fulfilled' && adminKbId) {
       try {
-        const results = await difyApi.retrieve(adminKbId, processedQuery);
+        const results = adminResult.value;
         
         // Логируем полную структуру ответа для диагностики
         logger.info(`CMD_GEN_RESPONSE: Retrieve results`, {
@@ -493,22 +501,25 @@ async function handleGenResponse(job) {
         });
         // Продолжаем с пустым контекстом (graceful degradation)
       }
-    } else {
+    } else if (adminResult.status === 'rejected') {
+      logger.warn('CMD_GEN_RESPONSE: RAG Retrieval failed, continuing without context', {
+        jobId: job.id,
+        orgId,
+        adminKbId,
+        error: adminResult.reason?.message || adminResult.reason,
+      });
+      // Продолжаем с пустым контекстом (graceful degradation)
+    } else if (!adminKbId) {
       logger.info('CMD_GEN_RESPONSE: No admin knowledge base available', {
         jobId: job.id,
         orgId,
       });
     }
 
-    // Получение чанков из истории тикетов (простой поиск для обратной совместимости)
-    let historyChunks = [];
-    if (historyKbId) {
+    // Обработка результата поиска в базе истории тикетов
+    if (historyResult.status === 'fulfilled' && historyKbId) {
       try {
-        const adminKey = config.dify.keys.admin;
-        if (!adminKey) {
-          throw new Error('Dify admin key is not configured');
-        }
-        historyChunks = await difyApi.retrieveChunks(adminKey, historyKbId, processedQuery, 5);
+        historyChunks = historyResult.value;
         
         // Преобразуем historyChunks в формат retrievedRecords и объединяем с результатами из adminKb
         if (historyChunks && historyChunks.length > 0) {
@@ -554,6 +565,14 @@ async function handleGenResponse(job) {
         });
         // Graceful degradation: продолжаем с пустым массивом
       }
+    } else if (historyResult.status === 'rejected') {
+      logger.warn('CMD_GEN_RESPONSE: Error retrieving history chunks', {
+        jobId: job.id,
+        orgId,
+        historyKbId,
+        error: historyResult.reason?.message || historyResult.reason,
+      });
+      // Graceful degradation: продолжаем с пустым массивом
     }
     
     // Логируем итоговое состояние retrievedRecords перед обрезкой контекста

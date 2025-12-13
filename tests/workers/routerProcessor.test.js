@@ -65,6 +65,19 @@ jest.mock('../../src/infrastructure/redis/client', () => {
   return mockRedisClient;
 });
 
+jest.mock('../../src/infrastructure/bullmq/factory', () => {
+  const mockConnection = {
+    quit: jest.fn().mockResolvedValue('OK'),
+    disconnect: jest.fn(),
+    on: jest.fn(),
+    once: jest.fn(),
+    status: 'ready',
+  };
+  const mockCreateWorker = jest.fn();
+  mockCreateWorker.sharedProducerConnection = mockConnection;
+  return mockCreateWorker;
+});
+
 jest.mock('../../src/utils/logger', () => ({
   info: jest.fn(),
   warn: jest.fn(),
@@ -72,14 +85,22 @@ jest.mock('../../src/utils/logger', () => ({
   debug: jest.fn(),
 }));
 
-jest.mock('../../src/utils/errorHandler', () => ({
-  createErrorPayload: jest.fn((error, meta) => ({
-    status: 'error',
-    errorCode: 'INTERNAL_ERROR',
-    message: error.message,
-    meta,
-  })),
-}));
+jest.mock('../../src/utils/errorHandler', () => {
+  const actualErrorHandler = jest.requireActual('../../src/utils/errorHandler');
+  return {
+    normalizeError: jest.fn((error) => {
+      // Используем реальную логику normalizeError для всех ошибок
+      return actualErrorHandler.normalizeError(error);
+    }),
+    createErrorPayload: jest.fn((error, meta) => ({
+      status: 'error',
+      errorCode: 'INTERNAL_ERROR',
+      message: error.message,
+      meta,
+    })),
+    handleDifyResourceError: jest.fn().mockResolvedValue(undefined),
+  };
+});
 
 const { Queue } = require('bullmq');
 const routerProcessor = require('../../src/workers/routerProcessor');
@@ -265,14 +286,17 @@ describe('Router Processor', () => {
       expect(sendResult).toHaveBeenCalledWith(
         'CMD_GEN_RESPONSE',
         expect.objectContaining({
-          status: 'error',
+          success: false,
+          error: expect.objectContaining({
+            code: expect.stringMatching(/ROUTING_ERROR|INTERNAL_ERROR/),
+            message: expect.any(String),
+          }),
         }),
         expect.objectContaining({
           jobId: 'test-job-123',
           traceId: 'trace-123',
         })
       );
-      expect(ErrorHandler.createErrorPayload).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -323,16 +347,19 @@ describe('Router Processor', () => {
         },
       };
 
-      const result = await routerProcessor(mockJob);
+      // routerProcessor бросает ошибку, которая обрабатывается safeProcessor
+      await expect(routerProcessor(mockJob)).rejects.toThrow('Unknown command: CMD_UNKNOWN_COMMAND');
 
       // Проверяем, что ошибка была отправлена в result queue
       expect(sendResult).toHaveBeenCalledTimes(1);
       expect(sendResult).toHaveBeenCalledWith(
         'CMD_UNKNOWN_COMMAND',
         expect.objectContaining({
-          status: 'error',
-          errorCode: 'INTERNAL_ERROR',
-          message: expect.stringContaining('Unknown job type'),
+          success: false,
+          error: expect.objectContaining({
+            code: 'UNKNOWN_COMMAND',
+            message: expect.stringContaining('Unknown command'),
+          }),
         }),
         expect.objectContaining({
           jobId: 'test-job-123',
@@ -340,17 +367,9 @@ describe('Router Processor', () => {
         })
       );
 
-      // Проверяем, что createErrorPayload был вызван
-      expect(ErrorHandler.createErrorPayload).toHaveBeenCalledTimes(1);
-
       // Проверяем, что задача не была добавлена ни в одну очередь
       expect(routerProcessor.fastQueue.add).not.toHaveBeenCalled();
       expect(routerProcessor.slowQueue.add).not.toHaveBeenCalled();
-
-      // Проверяем возвращаемое значение
-      expect(result.status).toBe('rejected');
-      expect(result.reason).toBe('unknown_job_type');
-      expect(result.jobName).toBe('CMD_UNKNOWN_COMMAND');
 
       // Проверяем логирование
       expect(logger.warn).toHaveBeenCalledWith(
@@ -360,8 +379,8 @@ describe('Router Processor', () => {
           jobName: 'CMD_UNKNOWN_COMMAND',
         })
       );
-      expect(logger.info).toHaveBeenCalledWith(
-        'Router: error sent to result queue for unknown job type',
+      expect(logger.error).toHaveBeenCalledWith(
+        'Processor Router failed',
         expect.objectContaining({
           jobId: 'test-job-123',
           jobName: 'CMD_UNKNOWN_COMMAND',
@@ -377,17 +396,20 @@ describe('Router Processor', () => {
         orgId: 'test-org-123',
       };
 
-      const result = await routerProcessor(mockJob);
+      await expect(routerProcessor(mockJob)).rejects.toThrow('Unknown command: CMD_UNKNOWN_COMMAND');
 
       expect(sendResult).toHaveBeenCalledWith(
         'CMD_UNKNOWN_COMMAND',
-        expect.any(Object),
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            code: 'UNKNOWN_COMMAND',
+          }),
+        }),
         expect.objectContaining({
           jobId: 'test-job-123',
         })
       );
-
-      expect(result.status).toBe('rejected');
     });
 
     test('должен обработать задачу с пустым data', async () => {
@@ -396,10 +418,21 @@ describe('Router Processor', () => {
       mockJob.name = 'CMD_UNKNOWN_COMMAND';
       mockJob.data = {};
 
-      const result = await routerProcessor(mockJob);
+      await expect(routerProcessor(mockJob)).rejects.toThrow('Unknown command: CMD_UNKNOWN_COMMAND');
 
       expect(sendResult).toHaveBeenCalled();
-      expect(result.status).toBe('rejected');
+      expect(sendResult).toHaveBeenCalledWith(
+        'CMD_UNKNOWN_COMMAND',
+        expect.objectContaining({
+          success: false,
+          error: expect.objectContaining({
+            code: 'UNKNOWN_COMMAND',
+          }),
+        }),
+        expect.objectContaining({
+          jobId: 'test-job-123',
+        })
+      );
     });
   });
 });
@@ -428,20 +461,10 @@ afterAll(async () => {
     }
   } catch {}
 
-  // Закрываем routerProcessor соединения
+  // Закрываем routerProcessor соединение (sharedProducerConnection)
   try {
-    if (routerProcessor.fastQueueConnection) {
-      const conn = routerProcessor.fastQueueConnection;
-      if (typeof conn.quit === 'function') {
-        cleanupPromises.push(conn.quit().catch(() => {}));
-      } else if (typeof conn.disconnect === 'function') {
-        cleanupPromises.push(new Promise((resolve) => {
-          try { conn.disconnect(); resolve(); } catch { resolve(); }
-        }));
-      }
-    }
-    if (routerProcessor.slowQueueConnection) {
-      const conn = routerProcessor.slowQueueConnection;
+    if (routerProcessor.sharedProducerConnection) {
+      const conn = routerProcessor.sharedProducerConnection;
       if (typeof conn.quit === 'function') {
         cleanupPromises.push(conn.quit().catch(() => {}));
       } else if (typeof conn.disconnect === 'function') {

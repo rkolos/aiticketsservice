@@ -4,6 +4,35 @@ const config = require('../../config');
 const logger = require('../../utils/logger');
 
 /**
+ * Общее соединение Redis для Producer операций (добавление задач в очереди)
+ * 
+ * ВАЖНО: Это соединение используется ТОЛЬКО для Producer операций (Queue.add).
+ * Воркеры (Consumer) создают свои собственные соединения, так как используют
+ * блокирующие команды Redis (BLPOP, BRPOP и т.д.).
+ * 
+ * Использование общего соединения для Producer операций снижает количество
+ * открытых соединений к Redis.
+ */
+const sharedProducerConnection = new Redis({
+  host: config.redis.host,
+  port: config.redis.port,
+  password: config.redis.password || undefined,
+  maxRetriesPerRequest: null, // Обязательное требование BullMQ для Producer
+});
+
+// Обработка ошибок соединения Redis
+sharedProducerConnection.on('error', (error) => {
+  logger.error('Redis connection error in shared producer connection', {
+    error: error.message,
+    stack: error.stack,
+  });
+});
+
+sharedProducerConnection.on('close', () => {
+  logger.warn('Redis connection closed in shared producer connection');
+});
+
+/**
  * Фабрика для создания BullMQ воркеров
  * 
  * ВАЖНО: Каждый воркер создает свои собственные соединения Redis,
@@ -100,4 +129,5 @@ function createWorker(queueName, processor, options = {}) {
 }
 
 module.exports = createWorker;
+module.exports.sharedProducerConnection = sharedProducerConnection;
 

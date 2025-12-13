@@ -1,56 +1,17 @@
 const { Queue } = require('bullmq');
-const Redis = require('ioredis');
-const config = require('../config');
 const logger = require('../utils/logger');
 const { QUEUES } = require('../core/constants');
 const createSafeProcessor = require('../utils/safeProcessor');
-
-// Создаем соединения Redis для очередей маршрутизации
-// ВАЖНО: Используем отдельные соединения для каждой очереди, как в resultQueue.js
-const fastQueueConnection = new Redis({
-  host: config.redis.host,
-  port: config.redis.port,
-  password: config.redis.password || undefined,
-  maxRetriesPerRequest: null, // Обязательное требование BullMQ
-});
-
-const slowQueueConnection = new Redis({
-  host: config.redis.host,
-  port: config.redis.port,
-  password: config.redis.password || undefined,
-  maxRetriesPerRequest: null, // Обязательное требование BullMQ
-});
-
-// Обработка ошибок соединений Redis
-fastQueueConnection.on('error', (error) => {
-  logger.error('Redis connection error in fast queue (router)', {
-    error: error.message,
-    stack: error.stack,
-  });
-});
-
-slowQueueConnection.on('error', (error) => {
-  logger.error('Redis connection error in slow queue (router)', {
-    error: error.message,
-    stack: error.stack,
-  });
-});
-
-fastQueueConnection.on('close', () => {
-  logger.warn('Redis connection closed in fast queue (router)');
-});
-
-slowQueueConnection.on('close', () => {
-  logger.warn('Redis connection closed in slow queue (router)');
-});
+const { sharedProducerConnection } = require('../infrastructure/bullmq/factory');
 
 // Создаем очереди для маршрутизации
+// Используем общее соединение для Producer операций (добавление задач)
 const fastQueue = new Queue(QUEUES.INTERACTIVE, {
-  connection: fastQueueConnection,
+  connection: sharedProducerConnection,
 });
 
 const slowQueue = new Queue(QUEUES.BACKGROUND, {
-  connection: slowQueueConnection,
+  connection: sharedProducerConnection,
 });
 
 // Команды, которые должны обрабатываться в Fast Lane (интерактивные)
@@ -130,10 +91,9 @@ async function routerProcessor(job) {
   };
 }
 
-// Экспортируем соединения для возможности закрытия в тестах
+// Экспортируем соединение и очереди для возможности закрытия в тестах
 module.exports = createSafeProcessor('Router', routerProcessor);
-module.exports.fastQueueConnection = fastQueueConnection;
-module.exports.slowQueueConnection = slowQueueConnection;
+module.exports.sharedProducerConnection = sharedProducerConnection;
 module.exports.fastQueue = fastQueue;
 module.exports.slowQueue = slowQueue;
 

@@ -2,6 +2,44 @@
  * Интеграционные тесты для проверки работоспособности модулей пунктов 5-7
  */
 
+// ВАЖНО: Моки должны быть ДО импортов, чтобы предотвратить создание реальных соединений
+jest.mock('ioredis', () => {
+  const mockRedis = jest.fn().mockImplementation(() => {
+    const mockConnection = {
+      quit: jest.fn().mockResolvedValue('OK'),
+      disconnect: jest.fn(),
+      on: jest.fn(),
+      once: jest.fn(),
+      status: 'ready',
+    };
+    return mockConnection;
+  });
+  return mockRedis;
+});
+
+jest.mock('bullmq', () => {
+  const mockQueue = jest.fn().mockImplementation(() => ({
+    add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),
+    close: jest.fn().mockResolvedValue(undefined),
+    on: jest.fn(),
+  }));
+  return {
+    Queue: mockQueue,
+    Worker: jest.fn(),
+  };
+});
+
+jest.mock('../../src/infrastructure/redis/client', () => {
+  const mockRedisClient = {
+    status: 'ready',
+    disconnect: jest.fn(),
+    ping: jest.fn().mockResolvedValue('PONG'),
+    on: jest.fn(),
+    once: jest.fn(),
+  };
+  return mockRedisClient;
+});
+
 // Закрываем соединения после всех тестов
 afterAll(async () => {
   const cleanupPromises = [];
@@ -20,6 +58,34 @@ afterAll(async () => {
     // Закрываем соединение Redis напрямую
     if (resultQueueModule.connection) {
       const conn = resultQueueModule.connection;
+      if (typeof conn.quit === 'function') {
+        cleanupPromises.push(
+          conn.quit().catch((error) => {
+            // Игнорируем ошибки закрытия
+          })
+        );
+      } else if (typeof conn.disconnect === 'function') {
+        cleanupPromises.push(
+          new Promise((resolve) => {
+            try {
+              conn.disconnect();
+              resolve();
+            } catch (error) {
+              resolve();
+            }
+          })
+        );
+      }
+    }
+  } catch (error) {
+    // Игнорируем ошибки закрытия
+  }
+
+  // Закрываем sharedProducerConnection
+  try {
+    const factoryModule = require('../../src/infrastructure/bullmq/factory');
+    if (factoryModule.sharedProducerConnection) {
+      const conn = factoryModule.sharedProducerConnection;
       if (typeof conn.quit === 'function') {
         cleanupPromises.push(
           conn.quit().catch((error) => {
@@ -66,7 +132,12 @@ afterAll(async () => {
 
   // Ждем завершения всех операций cleanup
   await Promise.all(cleanupPromises);
-}, 10000);
+  
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 200);
+    timer.unref();
+  });
+}, 15000);
 
 describe('Интеграционные тесты модулей', () => {
   describe('Пункт 5: Dify API Client', () => {
