@@ -7,5 +7,7 @@ coverage/
 dist/
 docker/redis_data/
 docker/postgres_data/
+docker/dify_storage/
+nginx/
 volumes/
 
