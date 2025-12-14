@@ -725,8 +725,10 @@ LLM думает долго или файл огромный. Повторите
 
 
 ----------------------------------------------
-# Пример корректно работающего смок теста:
 
+## Пример корректно работающего смок теста
+
+```bash
 user@Valerias-MacBook-Pro Tickets % cd /Users/user/Documents/Tickets && npm run test:smoke 2>&1
 
 > ticket-ai-worker@1.0.0 test:smoke
@@ -1495,4 +1497,5 @@ Total Tests: 12
 Passed: 12
 Duration: 62.3s
 
-user@Valerias-MacBook-Pro Tickets % 
+user@Valerias-MacBook-Pro Tickets %
+``` 
