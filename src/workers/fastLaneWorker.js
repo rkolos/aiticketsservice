@@ -635,7 +635,7 @@ async function handleGenResponse(job) {
       query,
       history: prunedHistoryResult.history,
       context: prunedContextResult.context,
-      lang,
+      lang: lang || 'en',
     };
 
     let workflowOutputs;
@@ -775,7 +775,7 @@ async function handleAnalyzeNewTicket(job) {
   const meta = job.data?.meta || {};
   
   const text = extractContent(job.data) || job.data?.text;
-  const targetLang = extractTargetLang(job.data) || job.data?.targetLanguage || 'ru';
+  const targetLang = extractTargetLang(job.data) || job.data?.targetLanguage || 'en';
 
   logger.info('CMD_ANALYZE_NEW_TICKET: Starting analysis', {
     jobId: job.id,

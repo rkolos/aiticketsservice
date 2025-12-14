@@ -291,7 +291,7 @@ async function handleArchiveTicket(job) {
       summarizerKey,
       {
         ticket_history: formattedHistory,
-        lang: lang, // Передаем значение (или undefined)
+        lang: lang || 'en', // Передаем значение (или 'en' по умолчанию)
         // Для совместимости с конфигурациями, где message обязательна (ошибка "message is required")
         message: formattedHistory,
       },
