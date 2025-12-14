@@ -65,95 +65,32 @@
 
 ### Основные настройки
 
-Переменная
-
-Обязательно
-
-Описание
-
-Дефолт
-
-`NODE_ENV`
-
-✅
-
-Окружение (`development`/`production`)
-
-`development`
-
-`LOG_LEVEL`
-
-❌
-
-Уровень логов
-
-`info`
-
-`HEALTHCHECK_PORT`
-
-❌
-
-Порт HTTP-сервера проверок
-
-`3000`
+| Переменная | Обязательно | Описание | Дефолт |
+|------------|-------------|----------|--------|
+| `NODE_ENV` | ✅ | Окружение (`development`/`production`) | `development` |
+| `LOG_LEVEL` | ❌ | Уровень логов | `info` |
+| `HEALTHCHECK_PORT` | ❌ | Порт HTTP-сервера проверок | `3000` |
 
 ### Redis
 
-Переменная
-
-Обязательно
-
-Описание
-
-`REDIS_HOST`
-
-✅
-
-Хост Redis
-
-`REDIS_PORT`
-
-❌
-
-Порт
-
-`REDIS_PASSWORD`
-
-✅ (Prod)
-
-Пароль
+| Переменная | Обязательно | Описание |
+|------------|-------------|----------|
+| `REDIS_HOST` | ✅ | Хост Redis |
+| `REDIS_PORT` | ❌ | Порт |
+| `REDIS_PASSWORD` | ✅ (Prod) | Пароль |
 
 ### Dify API
 
 ⚠️ **Важно:** API Dify должен быть доступен по сети от воркера.
 
-Переменная
-
-Описание
-
-`DIFY_API_URL`
-
-Базовый URL API (должен заканчиваться на `/v1`). Пример: `http://localhost:5001/v1`
-
-**`DIFY_KEY_ADMIN`**
-
-**Ключ датасетов.** Используется для создания баз знаний и RAG. (См. инструкцию ниже)
-
-`DIFY_KEY_CLASSIFIER`
-
-Ключ Workflow классификации тикетов
-
-`DIFY_KEY_SUMMARIZER`
-
-Ключ Workflow суммаризации тикетов
-
-`DIFY_KEY_RESPONSE_WORKFLOW`
-
-Ключ Workflow генерации ответов (RAG)
-
-`DIFY_APP_KEY_TRANSLATOR`
-
-Ключ Chatflow/Workflow переводчика
+| Переменная | Описание |
+|------------|----------|
+| `DIFY_API_URL` | Базовый URL API (должен заканчиваться на `/v1`). Пример: `http://localhost:5001/v1` |
+| **`DIFY_KEY_ADMIN`** | **Ключ датасетов.** Используется для создания баз знаний и RAG. (См. инструкцию ниже) |
+| `DIFY_KEY_CLASSIFIER` | Ключ Workflow классификации тикетов |
+| `DIFY_KEY_SUMMARIZER` | Ключ Workflow суммаризации тикетов |
+| `DIFY_KEY_RESPONSE_WORKFLOW` | Ключ Workflow генерации ответов (RAG) |
+| `DIFY_APP_KEY_TRANSLATOR` | Ключ Chatflow/Workflow переводчика |
 
 #### 🔑 Как получить `DIFY_KEY_ADMIN`
 
