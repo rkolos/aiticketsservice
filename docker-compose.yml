@@ -964,6 +964,49 @@ services:
     networks:
       - default
 
+  # ticket-ai-worker service
+  ticket-ai-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    environment:
+      # Node.js environment
+      NODE_ENV: production
+      LOG_LEVEL: info
+      HEALTHCHECK_PORT: 4000
+
+      # Redis configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: difyai123456
+      REDIS_USE_SSL: false
+      REDIS_DB: 0
+
+      # Dify API configuration
+      DIFY_API_URL: http://api:5001/v1
+      DIFY_KEY_ADMIN: ${DIFY_KEY_ADMIN:-dataset-zxpSgJYepLlTZLis064ShuA7}
+      DIFY_KEY_CLASSIFIER: ${DIFY_KEY_CLASSIFIER:-app-eZTtiihrlV2D0QqfnhtjxZEO}
+      DIFY_KEY_SUMMARIZER: ${DIFY_KEY_SUMMARIZER:-app-eZTtiihrlV2D0QqfnhtjxZEO}
+      DIFY_KEY_RESPONSE_WORKFLOW: ${DIFY_KEY_RESPONSE_WORKFLOW:-app-pmKpzGCd7zEByxo5YLmTfpXS}
+      DIFY_APP_KEY_TRANSLATOR: ${DIFY_APP_KEY_TRANSLATOR:-app-UjUAGkbyJ0xwYGz13ztP7brp}
+      DIFY_APP_KEY_QUERY_SIMPLIFIER: ${DIFY_APP_KEY_QUERY_SIMPLIFIER:-app-5WqzkgIuLOX7mUd4IQdUhRCn}
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - default
+      - ssrf_proxy_network
+
 networks:
   # create a network between sandbox, api and ssrf_proxy, and can not access outside.
   ssrf_proxy_network:

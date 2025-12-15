@@ -319,9 +319,10 @@ async function handleGenResponse(job) {
       promptTokens: simplificationUsage.prompt_tokens,
       completionTokens: simplificationUsage.completion_tokens,
       totalTokens: simplificationUsage.total_tokens,
-    });
+    }
+  });
 
-    const adminKey = config.dify.keys.admin;
+  const adminKey = config.dify.keys.admin;
     if (!adminKey) {
       throw new Error('Dify admin key is not configured');
     }

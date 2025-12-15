@@ -1,0 +1,243 @@
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  mode: workflow
+  name: Siple question
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.7@c4e7b999ae67bfc059f6f51630bed36def5a835d12b0251694f5784b5ff1cd95
+    version: null
+kind: app
+version: 0.5.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: 1765387381889-source-1765387454887-target
+      source: '1765387381889'
+      sourceHandle: source
+      target: '1765387454887'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1765387454887-source-1765387732516-target
+      source: '1765387454887'
+      sourceHandle: source
+      target: '1765387732516'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: User Input
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: question
+          max_length: 10000
+          options: []
+          placeholder: ''
+          required: true
+          type: paragraph
+          variable: question
+      height: 109
+      id: '1765387381889'
+      position:
+        x: 80
+        y: 282
+      positionAbsolute:
+        x: 80
+        y: 282
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: deepseek-chat
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - role: system
+          text: '### ROLE
+
+            You are a Search Query Optimizer for a Retrieval-Augmented Generation
+            (RAG) system. Your goal is to refine raw user inputs into precise, effective
+            search queries that maximize the relevance of retrieved documents.
+
+
+            ### TASK
+
+            Analyze the user''s incoming message, strip away conversational noise
+            (greetings, emotions, urgency markers, unnecessary context), and extract
+            the core technical intent or question.
+
+
+            ### RULES
+
+            1. **Remove Noise**: Eliminate phrases like "Hello", "Please help", "I
+            have a problem", "Urgent", "It doesn''t work".
+
+            2. **Focus on Keywords**: Keep error codes, specific feature names, and
+            technical terms exactly as they appear.
+
+            3. **Preserve Meaning**: The output must represent the exact semantic
+            meaning of the problem without ambiguity.
+
+            4. **LANGUAGE CONSTRAINT**: You MUST generate the search query in the
+            **SAME LANGUAGE** as the user''s original input. Do not translate the
+            terms unless they are mixed (e.g., keep English technical terms in a Russian
+            query).
+
+            5. **Format**: Output ONLY the refined search string. No explanations,
+            no markdown, no quotation marks.
+
+
+            ### EXAMPLES
+
+
+            Input: "Hello, I am very frustrated. I tried to login ten times and it
+            keeps giving me error 500. Please fix it ASAP!"
+
+            Output: login error 500
+
+
+            Input: "Привет, подскажи пожалуйста, как мне настроить VPN? Я нажимаю
+            кнопку, но ничего не происходит."
+
+            Output: настройка VPN не реагирует кнопка
+
+
+            Input: "Buenos días, ¿cómo puedo restablecer mi contraseña olvidada?"
+
+            Output: restablecer contraseña olvidada
+
+
+            Input: "У меня принтер HP выдает ошибку ''Paper Jam'' и мигает красным."
+
+            Output: принтер HP ошибка Paper Jam мигает красным
+
+
+            ### INPUT MESSAGE
+
+            {{#1765387381889.question#}}'
+        selected: false
+        title: LLM
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1765387454887'
+      position:
+        x: 382
+        y: 282
+      positionAbsolute:
+        x: 382
+        y: 282
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1765387454887'
+          - text
+          value_type: string
+          variable: text
+        - value_selector:
+          - '1765387454887'
+          - reasoning_content
+          value_type: string
+          variable: reasoning_content
+        - value_selector:
+          - '1765387454887'
+          - usage
+          value_type: object
+          variable: usage
+        selected: true
+        title: Output
+        type: end
+      height: 140
+      id: '1765387732516'
+      position:
+        x: 684
+        y: 282
+      positionAbsolute:
+        x: 684
+        y: 282
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: 0
+      y: 0
+      zoom: 1
+  rag_pipeline_variables: []

@@ -1,0 +1,235 @@
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  mode: workflow
+  name: Support Helper
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.7@c4e7b999ae67bfc059f6f51630bed36def5a835d12b0251694f5784b5ff1cd95
+    version: null
+kind: app
+version: 0.5.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: 1765222766946-source-1765222905366-target
+      source: '1765222766946'
+      sourceHandle: source
+      target: '1765222905366'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1765222905366-source-1765222967171-target
+      source: '1765222905366'
+      sourceHandle: source
+      target: '1765222967171'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: User Input
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: query
+          max_length: 10000
+          options: []
+          placeholder: ''
+          required: true
+          type: paragraph
+          variable: query
+        - default: ''
+          hint: ''
+          label: history
+          max_length: 10000
+          options: []
+          placeholder: ''
+          required: true
+          type: paragraph
+          variable: history
+        - default: ''
+          hint: ''
+          label: context
+          max_length: 100000
+          options: []
+          placeholder: ''
+          required: true
+          type: paragraph
+          variable: context
+        - default: en
+          hint: ''
+          label: lang
+          max_length: 48
+          options: []
+          placeholder: ''
+          required: false
+          type: text-input
+          variable: lang
+      height: 187
+      id: '1765222766946'
+      position:
+        x: 80
+        y: 282
+      positionAbsolute:
+        x: 80
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: deepseek-chat
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - id: 792eaa6a-eb48-42e5-9068-3177c5ad5a56
+          role: system
+          text: "You are a helpful and professional Technical Support Agent.\nYour\
+            \ mission is to answer user queries exclusively based on the provided\
+            \ Knowledge Base context.\n\n### INPUT DATA:\nContext (Knowledge Base):\n\
+            {{#1765222766946.context#}}\n\nUser Query: {{#1765222766946.query#}}\n\
+            Conversation History:\n{{#1765222766946.history#}}\n\nTarget Language:\
+            \ {{#1765222766946.lang#}}\n\n### INSTRUCTIONS: 1. **Analyze**: Read the\
+            \ \"Context\" to find the answer to the \"User Query\". 2. **Internalize**:\
+            \ Treat the information in the Context as your own professional knowledge.\
+            \ Do not reference the text/documents directly. 3. **Formulate**: Construct\
+            \ a clear, step-by-step answer in {{#1765222766946.lang#}}. 4. **Tone**:\
+            \ Use a natural, professional, and empathetic tone (use \"I\" or \"We\"\
+            ). \n### CRITICAL STYLE GUIDELINES (HUMAN TOUCH): - **DIRECTNESS**: Start\
+            \ answering the question immediately. Do not start with \"Based on the\
+            \ provided text\", \"According to the documents\", or \"The context says\"\
+            . - **OWNERSHIP**: Speak as if you represent the company. Instead of \"\
+            The document states that...\", say \"We recommend...\" or \"You can do\
+            \ this by...\". - **NO META-TALK**: Never mention \"context\", \"knowledge\
+            \ base\", \"provided data\", or \"training data\". - **FLOW**: Use natural\
+            \ transitions between sentences. \n\n### HANDLING UNKNOWN INFORMATION:\
+            \ - If the answer is NOT in the Context, do NOT say \"I don't have this\
+            \ in my database.\" - Instead, use a standard support phrase like: \"\
+            I am sorry, but I cannot resolve this specific issue at the moment. Please\
+            \ contact a human operator for advanced assistance.\" (Translate this\
+            \ strictly to {{#1765222766946.lang#}}).\n\n### RESPONSE GENERATION:\n\
+            Generate the response directly to the user in {{#1765222766946.lang#}}."
+        selected: true
+        title: LLM
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1765222905366'
+      position:
+        x: 382
+        y: 282
+      positionAbsolute:
+        x: 382
+        y: 282
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1765222905366'
+          - text
+          value_type: string
+          variable: text
+        - value_selector:
+          - '1765222905366'
+          - reasoning_content
+          value_type: string
+          variable: reasoning_content
+        - value_selector:
+          - '1765222905366'
+          - usage
+          value_type: object
+          variable: usage
+        selected: false
+        title: Output
+        type: end
+      height: 140
+      id: '1765222967171'
+      position:
+        x: 684
+        y: 282
+      positionAbsolute:
+        x: 684
+        y: 282
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: 0
+      y: -1
+      zoom: 1
+  rag_pipeline_variables: []

@@ -1,0 +1,239 @@
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  mode: workflow
+  name: Ticket Summarizer
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.7@c4e7b999ae67bfc059f6f51630bed36def5a835d12b0251694f5784b5ff1cd95
+    version: null
+kind: app
+version: 0.5.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: 1765139040768-source-1765139098619-target
+      source: '1765139040768'
+      sourceHandle: source
+      target: '1765139098619'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1765139098619-source-1765139610121-target
+      source: '1765139098619'
+      sourceHandle: source
+      target: '1765139610121'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: User Input
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: ticket_history
+          max_length: 10000
+          options: []
+          placeholder: ''
+          required: true
+          type: paragraph
+          variable: ticket_history
+        - default: en
+          hint: ''
+          label: lang
+          max_length: 48
+          options: []
+          placeholder: ''
+          required: false
+          type: text-input
+          variable: lang
+      height: 135
+      id: '1765139040768'
+      position:
+        x: 80
+        y: 282
+      positionAbsolute:
+        x: 80
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: deepseek-chat
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - id: 4ae958da-1ce4-478b-a066-c3f3c974d2a7
+          role: system
+          text: 'You are a Technical Support Archivist. Your goal is to create a concise,
+            factual summary of a resolved support ticket based strictly on the provided
+            conversation history.
+
+
+            ### INPUT DATA:
+
+            Conversation History:
+
+            {{#1765139040768.ticket_history#}}
+
+
+            Target Language: {{#1765139040768.lang#}}
+
+
+            ### INSTRUCTIONS:
+
+            1. **Analyze** the entire conversation history provided above.
+
+            2. **Extract** the core problem reported by the user.
+
+            3. **Identify** the specific solution provided by the support agent.
+
+            4. **Determine** the final status (Resolved / Unresolved).
+
+            5. **Translate** and format your entire response into {{#1765139040768.lang#}}.
+
+
+            ### RULES & BOUNDARIES:
+
+            - **NO HALLUCINATIONS**: Summarize ONLY what is explicitly stated in the
+            history. Do not invent details or assume steps that were not mentioned.
+
+            - If the history is empty or unclear, state: "Insufficient information
+            to summarize."
+
+            - Output the summary in a structured format (Problem, Solution, Statuуs).
+
+
+            ### OUTPUT FORMAT (in {{#1765139040768.lang#}}):
+
+            **Problem:** [Brief description]
+
+            **Solution:** [Action taken or advice given]
+
+            **Status:** [Resolved/Unresolved]'
+        selected: false
+        title: LLM
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1765139098619'
+      position:
+        x: 382
+        y: 282
+      positionAbsolute:
+        x: 382
+        y: 282
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1765139098619'
+          - text
+          value_type: string
+          variable: text
+        - value_selector:
+          - '1765139098619'
+          - reasoning_content
+          value_type: string
+          variable: reasoning_content
+        - value_selector:
+          - '1765139098619'
+          - usage
+          value_type: object
+          variable: usage
+        selected: false
+        title: Output
+        type: end
+      height: 140
+      id: '1765139610121'
+      position:
+        x: 684
+        y: 282
+      positionAbsolute:
+        x: 684
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: 0
+      y: 0
+      zoom: 1
+  rag_pipeline_variables: []
