@@ -849,12 +849,12 @@ services:
     image: nginx:latest
     restart: always
     volumes:
-      - ./nginx/nginx.conf.template:/etc/nginx/nginx.conf.template
-      - ./nginx/proxy.conf.template:/etc/nginx/proxy.conf.template
-      - ./nginx/https.conf.template:/etc/nginx/https.conf.template
-      - ./nginx/conf.d:/etc/nginx/conf.d
-      - ./nginx/docker-entrypoint.sh:/docker-entrypoint-mount.sh
-      - ./nginx/ssl:/etc/ssl # cert dir (legacy)
+      - ./docker/nginx/nginx.conf.template:/etc/nginx/nginx.conf.template
+      - ./docker/nginx/proxy.conf.template:/etc/nginx/proxy.conf.template
+      - ./docker/nginx/https.conf.template:/etc/nginx/https.conf.template
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d
+      - ./docker/nginx/docker-entrypoint.sh:/docker-entrypoint-mount.sh
+      - ./docker/nginx/ssl:/etc/ssl # cert dir (legacy)
       - ./volumes/certbot/conf/live:/etc/letsencrypt/live # cert dir (with certbot container)
       - ./volumes/certbot/conf:/etc/letsencrypt
       - ./volumes/certbot/www:/var/www/html
@@ -971,6 +971,8 @@ services:
       dockerfile: Dockerfile
       target: production
     restart: unless-stopped
+    ports:
+      - "4000:4000"
     environment:
       # Node.js environment
       NODE_ENV: production
@@ -1008,6 +1010,8 @@ services:
       - ssrf_proxy_network
 
 networks:
+  default:
+    driver: bridge
   # create a network between sandbox, api and ssrf_proxy, and can not access outside.
   ssrf_proxy_network:
     driver: bridge

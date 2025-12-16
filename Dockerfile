@@ -14,8 +14,8 @@ CMD ["npm", "run", "dev"]
 # Production Stage
 FROM node:lts-alpine AS production
 
-# Установка системных зависимостей для сборки нативных модулей (если требуется)
-RUN apk add --no-cache python3 make g++
+# Установка системных зависимостей для сборки нативных модулей и отладки
+RUN apk add --no-cache python3 make g++ curl
 
 # Установка переменных окружения для production
 ENV NODE_ENV=production

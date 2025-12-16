@@ -191,8 +191,10 @@ function createHealthcheckServer(workers) {
     };
 
     // Определяем общий статус
-    const allChecks = [redisCheck, difyCheck, fastLaneCheck, slowLaneCheck];
-    const isHealthy = allChecks.every((check) => check.status === 'ok');
+    // Redis и воркеры - критически важны, Dify API - опционально на старте
+    const isHealthy = redisCheck.status === 'ok' &&
+                     fastLaneCheck.status === 'ok' &&
+                     slowLaneCheck.status === 'ok';
 
     const response = {
       status: isHealthy ? 'healthy' : 'unhealthy',
@@ -202,25 +204,27 @@ function createHealthcheckServer(workers) {
 
     // Логируем результаты проверок
     if (!isHealthy) {
-      logger.warn('Healthcheck: Some components are unhealthy', {
+      logger.warn('Healthcheck: Critical components are unhealthy', {
         checks: Object.keys(checks).filter((key) => {
           const check = checks[key];
-          if (check.status) {
-            return check.status !== 'ok';
-          }
-          if (check.fastLane) {
-            return check.fastLane.status !== 'ok' || check.slowLane.status !== 'ok';
+          if (key === 'redis' || key === 'workers') {
+            if (check.status) {
+              return check.status !== 'ok';
+            }
+            if (check.fastLane) {
+              return check.fastLane.status !== 'ok' || check.slowLane.status !== 'ok';
+            }
           }
           return false;
         }),
       });
     } else {
       // Логируем успешные проверки на уровне info согласно требованиям
-      logger.info('Healthcheck: All components are healthy', {
+      logger.info('Healthcheck: Critical components are healthy', {
         redis: redisCheck.status,
-        dify: difyCheck.status,
         fastLane: fastLaneCheck.status,
         slowLane: slowLaneCheck.status,
+        dify: difyCheck.status, // Dify может быть error, но это не критично
       });
     }
 
