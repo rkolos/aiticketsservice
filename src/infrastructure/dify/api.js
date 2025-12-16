@@ -3,7 +3,7 @@ const difyClient = require('./client');
 const { DifyApiError } = require('../../core/errors');
 const logger = require('../../utils/logger');
 const config = require('../../config');
-const { DATASET_PROCESS_RULES, HYBRID_RETRIEVAL_CONFIG } = require('../../core/constants');
+const { DATASET_PROCESS_RULES, HYBRID_RETRIEVAL_CONFIG, EMBEDDING_CONFIG } = require('../../core/constants');
 
 /**
  * Группа 1: Workflow & Chat
@@ -140,15 +140,40 @@ async function listDatasets(apiKey, page = 1, limit = 20) {
  * @param {string} name - Название датасета
  * @returns {Promise<Object>} Объект созданного датасета (с id)
  */
-async function createDataset(apiKey, name) {
+/**
+ * Создать новый датасет с полной конфигурацией
+ * @param {string} apiKey - Admin API ключ
+ * @param {string} name - Название датасета
+ * @param {Object} [retrievalConfig] - Настройки поиска (по умолчанию HYBRID_RETRIEVAL_CONFIG)
+ * @returns {Promise<Object>} Объект созданного датасета
+ */
+async function createDataset(apiKey, name, retrievalConfig = HYBRID_RETRIEVAL_CONFIG) {
   try {
+    // Формируем полный payload согласно документации
+    const payload = {
+      name: name,
+      description: 'Knowledge Base created by AI Worker', // Полезно для UI
+      permission: 'only_me',
+      indexing_technique: 'high_quality',
+      provider: 'vendor', // Обычно 'vendor' для внутренних баз Dify
+
+      // Настройки эмбеддингов (обязательны для high_quality)
+      embedding_model: EMBEDDING_CONFIG.embedding_model,
+      embedding_model_provider: EMBEDDING_CONFIG.embedding_model_provider,
+
+      // Настройки поиска и реранкинга (сразу при создании)
+      retrieval_model: retrievalConfig,
+    };
+
+    logger.info('Creating dataset with config', {
+      name,
+      embedding: EMBEDDING_CONFIG.embedding_model,
+      rerank: retrievalConfig.reranking_mode?.reranking_model_name,
+    });
+
     const response = await difyClient.post(
       '/datasets',
-      {
-        name,
-        permission: 'only_me',
-        indexing_technique: 'high_quality',
-      },
+      payload,
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -158,7 +183,11 @@ async function createDataset(apiKey, name) {
 
     return response.data;
   } catch (error) {
-    logger.error('Error creating dataset', { name, error: error.message });
+    logger.error('Error creating dataset', {
+      name,
+      error: error.message,
+      response: error.response?.data,
+    });
     throw error;
   }
 }

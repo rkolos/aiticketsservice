@@ -322,42 +322,15 @@ class OrganizationService {
       logger.info('ensureAdminKb: creating new dataset', { orgId });
 
       try {
+        // ВАЖНО: Больше не нужно вызывать updateDatasetRetrievalSettings отдельно!
+        // Мы передаем HYBRID_RETRIEVAL_CONFIG сразу при создании (он по умолчанию в api.js, но можно передать явно)
         const newDataset = await difyApi.createDataset(adminKey, expectedName);
         adminKbId = newDataset.id;
 
-        logger.info('ensureAdminKb: created new dataset', {
+        logger.info('ensureAdminKb: created new dataset with Hybrid Search & Rerank', {
           orgId,
           adminKbId,
         });
-
-        // Устанавливаем Hybrid Search для нового датасета
-        logger.info('ensureAdminKb: applying Hybrid Search settings', { orgId, adminKbId });
-        const settingsResult = await difyApi.updateDatasetRetrievalSettings(adminKey, adminKbId, HYBRID_RETRIEVAL_CONFIG);
-        
-        if (settingsResult.success === false) {
-          // Логируем реальную причину ошибки от Dify
-          logger.error('CRITICAL: Failed to enable Hybrid Search', {
-            orgId,
-            datasetId: adminKbId,
-            error: settingsResult.error,
-            reason: settingsResult.reason,
-            statusCode: settingsResult.statusCode,
-          });
-          
-          // Удаляем "кривой" датасет, чтобы не оставлять мусор
-          try {
-            await difyApi.deleteDataset(adminKey, adminKbId);
-            logger.info('ensureAdminKb: deleted dataset after Hybrid Search failure', { orgId, adminKbId });
-          } catch (deleteError) {
-            logger.warn('ensureAdminKb: failed to delete dataset after Hybrid Search failure', {
-              orgId,
-              adminKbId,
-              error: deleteError.message,
-            });
-          }
-          
-          throw new Error(`Failed to set Hybrid Search: ${settingsResult.error}`);
-        }
       } catch (error) {
         logger.error('ensureAdminKb: error creating dataset', {
           orgId,
@@ -474,42 +447,14 @@ class OrganizationService {
       logger.info('ensureHistoryKb: creating new dataset', { orgId });
 
       try {
+        // Создаем сразу с правильными настройками
         const newDataset = await difyApi.createDataset(adminKey, expectedName);
         historyKbId = newDataset.id;
 
-        logger.info('ensureHistoryKb: created new dataset', {
+        logger.info('ensureHistoryKb: created new dataset with Hybrid Search & Rerank', {
           orgId,
           historyKbId,
         });
-
-        // Устанавливаем Hybrid Search для нового датасета
-        logger.info('ensureHistoryKb: applying Hybrid Search settings', { orgId, historyKbId });
-        const settingsResult = await difyApi.updateDatasetRetrievalSettings(adminKey, historyKbId, HYBRID_RETRIEVAL_CONFIG);
-        
-        if (settingsResult.success === false) {
-          // Логируем реальную причину ошибки от Dify
-          logger.error('CRITICAL: Failed to enable Hybrid Search', {
-            orgId,
-            datasetId: historyKbId,
-            error: settingsResult.error,
-            reason: settingsResult.reason,
-            statusCode: settingsResult.statusCode,
-          });
-          
-          // Удаляем "кривой" датасет, чтобы не оставлять мусор
-          try {
-            await difyApi.deleteDataset(adminKey, historyKbId);
-            logger.info('ensureHistoryKb: deleted dataset after Hybrid Search failure', { orgId, historyKbId });
-          } catch (deleteError) {
-            logger.warn('ensureHistoryKb: failed to delete dataset after Hybrid Search failure', {
-              orgId,
-              historyKbId,
-              error: deleteError.message,
-            });
-          }
-          
-          throw new Error(`Failed to set Hybrid Search: ${settingsResult.error}`);
-        }
       } catch (error) {
         logger.error('ensureHistoryKb: error creating dataset', {
           orgId,

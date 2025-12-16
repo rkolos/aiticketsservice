@@ -31,18 +31,28 @@ module.exports = {
       },
     },
   },
+  // ИЗМЕНЕНИЕ: Используем Jina вместо OpenAI для векторов
+  // Убедитесь, что в Dify -> Settings -> Model Provider -> Jina включена модель Text Embedding
+  EMBEDDING_CONFIG: {
+    embedding_model_provider: 'jina',
+    embedding_model: 'jina-embeddings-v3', // Или 'jina-embeddings-v2-base-en' (проверьте, что доступно в вашем Dify)
+  },
   // Настройки для Hybrid Search (Retrieval Settings)
+  // Структура согласно ошибке валидации Dify API:
+  // - reranking_mode должен быть строкой (не объектом)
+  // - reranking_model - отдельный объект с настройками провайдера
+  // - weights должен быть объектом или не передаваться при создании датасета
   HYBRID_RETRIEVAL_CONFIG: {
     search_method: 'hybrid_search',
     reranking_enable: true,
-    // ИСПРАВЛЕНИЕ: reranking_mode должен быть объектом с настройками провайдера
-    reranking_mode: {
+    reranking_mode: 'reranking_model', // Строка (как требует API)
+    reranking_model: {
       reranking_provider_name: 'jina',
       reranking_model_name: 'jina-reranker-v2-base-multilingual',
     },
-    // Старое поле 'reranking_model' удалено, оно больше не нужно
-    top_k: 3,
-    score_threshold_enabled: false,
+    // weights убран - API требует объект или не принимает при создании датасета
+    top_k: 5,
+    score_threshold_enabled: true,
     score_threshold: 0.5,
   },
 };
