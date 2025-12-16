@@ -3,7 +3,7 @@ const difyClient = require('./client');
 const { DifyApiError } = require('../../core/errors');
 const logger = require('../../utils/logger');
 const config = require('../../config');
-const { DATASET_PROCESS_RULES } = require('../../core/constants');
+const { DATASET_PROCESS_RULES, HYBRID_RETRIEVAL_CONFIG } = require('../../core/constants');
 
 /**
  * Группа 1: Workflow & Chat
@@ -201,14 +201,13 @@ async function deleteDataset(apiKey, datasetId) {
  * @returns {Promise<Object>} Результат обновления настроек
  */
 async function updateDatasetRetrievalSettings(apiKey, datasetId, retrievalModel) {
-  const { HYBRID_RETRIEVAL_CONFIG } = require('../core/constants');
-  
   try {
     // Используем переданную конфигурацию или конфигурацию по умолчанию
     const configToApply = retrievalModel || HYBRID_RETRIEVAL_CONFIG;
 
-    const response = await difyClient.post(
-      `/datasets/${datasetId}/retrieval-setting`,
+    // ИСПРАВЛЕНИЕ: Используем PATCH /datasets/{id} вместо POST /.../retrieval-setting
+    const response = await difyClient.patch(
+      `/datasets/${datasetId}`,
       {
         retrieval_model: configToApply,
       },
@@ -226,24 +225,24 @@ async function updateDatasetRetrievalSettings(apiKey, datasetId, retrievalModel)
 
     return response.data || { success: true };
   } catch (error) {
-    // Если Rerank модель не подключена, логируем предупреждение, но не выбрасываем ошибку
-    if (error.response && error.response.status === 400) {
-      const errorMessage = error.response.data?.message || error.message;
-      if (errorMessage.includes('rerank') || errorMessage.includes('reranking')) {
-        logger.warn('Hybrid Search cannot be enabled: Rerank model not configured in Dify', {
-          datasetId,
-          error: errorMessage,
-        });
-        // Возвращаем объект с флагом, что настройка не применена
-        return { success: false, reason: 'rerank_model_not_configured', error: errorMessage };
-      }
-    }
-
+    // Обрабатываем все ошибки и возвращаем структурированный результат
+    const errorMessage = error.response?.data?.message || error.response?.data?.error || error.message;
+    const statusCode = error.response?.status;
+    
     logger.error('Error updating dataset retrieval settings', {
       datasetId,
-      error: error.message,
+      statusCode,
+      error: errorMessage,
+      fullError: error.response?.data,
     });
-    throw error;
+
+    // Возвращаем объект с флагом ошибки для всех случаев
+    return {
+      success: false,
+      reason: statusCode === 400 ? 'invalid_request' : statusCode === 404 ? 'dataset_not_found' : 'unknown_error',
+      error: errorMessage,
+      statusCode,
+    };
   }
 }
 
@@ -512,19 +511,10 @@ async function retrieveChunks(apiKey, datasetId, query, limit = 5) {
     // Обрезаем запрос до 250 символов (ограничение Dify API)
     const trimmedQuery = query.length > 250 ? query.substring(0, 250) : query;
 
-    // Конфигурация для Q&A режима с reranking
+    // Используем конфигурацию из constants с переопределением top_k
     const retrievalModel = {
-      search_method: 'hybrid_search',
-      reranking_enable: true,
-      reranking_mode: 'reranking_model',
-      reranking_model: {
-        reranking_provider_name: 'jina',
-        reranking_model_name: 'jina-reranker-v2-base-multilingual'
-      },
-      weights: 0.7, // Приоритет семантики (0.7) над ключевыми словами
-      top_k: limit,
-      score_threshold_enabled: true,
-      score_threshold: 0.5
+      ...HYBRID_RETRIEVAL_CONFIG,
+      top_k: limit, // Переопределяем top_k на переданный limit
     };
 
     const response = await difyClient.post(
@@ -560,19 +550,10 @@ async function retrieveChunks(apiKey, datasetId, query, limit = 5) {
  */
 async function retrieve(datasetId, query, retrievalConfig = {}) {
   try {
-    // Базовая конфигурация для Jina Reranker
+    // Используем конфигурацию из constants с переопределением top_k и возможностью кастомизации через retrievalConfig
     const defaultModel = {
-      search_method: 'hybrid_search',
-      reranking_enable: true,
-      reranking_mode: 'reranking_model', // Обязательный параметр режима
-      reranking_model: {
-        reranking_provider_name: 'jina',
-        reranking_model_name: 'jina-reranker-v2-base-multilingual'
-      },
-      weights: 0.7, // Приоритет семантики (0.7) над ключевыми словами
-      top_k: 7,
-      score_threshold_enabled: true,
-      score_threshold: 0.5
+      ...HYBRID_RETRIEVAL_CONFIG,
+      top_k: 7, // Значение по умолчанию для этой функции
     };
 
     // Обрезаем запрос до 250 символов (ограничение Dify API)

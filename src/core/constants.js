@@ -35,14 +35,14 @@ module.exports = {
   HYBRID_RETRIEVAL_CONFIG: {
     search_method: 'hybrid_search',
     reranking_enable: true,
-    reranking_mode: 'reranking_model',
-    reranking_model: {
+    // ИСПРАВЛЕНИЕ: reranking_mode должен быть объектом с настройками провайдера
+    reranking_mode: {
       reranking_provider_name: 'jina',
       reranking_model_name: 'jina-reranker-v2-base-multilingual',
     },
-    weights: 0.7, // Приоритет семантики (0.7) над ключевыми словами
-    top_k: 5,
-    score_threshold_enabled: true,
+    // Старое поле 'reranking_model' удалено, оно больше не нужно
+    top_k: 3,
+    score_threshold_enabled: false,
     score_threshold: 0.5,
   },
 };
