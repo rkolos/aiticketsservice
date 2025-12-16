@@ -16,7 +16,7 @@ async function checkSystem() {
       name: 'Dify API Access',
       url: 'http://localhost:5001/v1/datasets',
       headers: { 'Authorization': `Bearer ${process.env.DIFY_KEY_ADMIN}` },
-      check: (data, status) => status === 200 || (data.code !== 'unauthorized')
+      check: (data, status) => status === 200
     },
     {
       name: 'Redis Connection',
