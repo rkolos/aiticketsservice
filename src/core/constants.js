@@ -12,4 +12,23 @@ module.exports = {
   // Лимиты размера файлов для защиты от OOM
   MAX_FILE_SIZE_BYTES: 50 * 1024 * 1024, // 50MB для стриминга
   MAX_TEXT_PROCESSING_LIMIT: 5 * 1024 * 1024, // 5MB для текстовой обработки (fallback)
+  // Правила процессинга для датасетов Dify (Parent-child + Hybrid Search)
+  DATASET_PROCESS_RULES: {
+    mode: 'custom',
+    rules: {
+      pre_processing_rules: [
+        { id: 'remove_extra_spaces', enabled: true },
+        { id: 'remove_urls_emails', enabled: false },
+      ],
+      segmentation: {
+        separator: '\n',
+        max_tokens: 1024, // Parent chunk size
+        chunking_mode: 'parent_child',
+        parent_child_config: {
+          parent_chunk_size: 1024,
+          child_chunk_size: 512,
+        },
+      },
+    },
+  },
 };

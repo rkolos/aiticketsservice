@@ -193,22 +193,32 @@ async function handleKbAddFile(job) {
       error: error.message,
     });
 
-    // Инвалидация кэша при ошибках ресурсов Dify
+    // Если Dify говорит, что датасет не найден (404), значит наш кеш врет.
+    // Сбрасываем кеш для этой организации. BullMQ повторит задачу, и воркер создаст новую базу.
+    if (error.response?.status === 404 || (error.message && error.message.includes('Dataset not found'))) {
+        logger.warn('Dataset not found in Dify (stale cache). Invalidating cache...', { orgId });
+        await OrganizationService.invalidateOrgCache(orgId);
+        // Пробрасываем ошибку, чтобы BullMQ поставил задачу в retry
+        throw error; 
+    }
+
     await ErrorHandler.handleDifyResourceError(error, orgId);
 
-    // Fallback: если Dify требует indexing_technique и отклоняет uploadFile,
-    // пробуем загрузить как текстовый документ.
+    // Fallback logic
     const isIndexingError =
       adminKbId &&
-      (error?.message?.toLowerCase().includes('indexing_technique is required') ||
-        error?.code === 'invalid_param');
+      (error?.message?.toLowerCase().includes('indexing_technique') ||
+        error?.message?.toLowerCase().includes('please upload your file') || // Catch generic upload errors
+        error?.code === 'invalid_param' ||
+        error?.response?.status === 400); // Broaden check for 400 Bad Request
 
     if (isIndexingError) {
       try {
-        logger.warn('CMD_KB_ADD_FILE: fallback to createDocumentByText due to indexing_technique error', {
+        logger.warn('CMD_KB_ADD_FILE: fallback to createDocumentByText', {
           orgId,
           fileName,
           fileUrl,
+          reason: error.message
         });
 
         const { stream: retryStream, size } = await FileService.downloadStream(fileUrl);
@@ -231,11 +241,18 @@ async function handleKbAddFile(job) {
 
         const startTime = Date.now();
         const resultMeta = { orgId, fileUrl, fileName, ...meta };
+        
+        // Extract ID correctly for createDocumentByText response structure
+        // Usually: { document: { id: "..." }, ... }
+        const docId = createResult?.document?.id || 
+                      createResult?.document_id || 
+                      createResult?.id || 
+                      createResult?.task_id;
 
         // Форматирование ответа в стандартизированном формате
         const payload = formatSuccess(
           {
-            documentId: createResult?.document_id || createResult?.id || createResult?.task_id, // Унифицированное название
+            documentId: docId, 
             status: createResult?.status || 'indexing',
             fileName,
             orgId,

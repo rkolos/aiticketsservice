@@ -73,13 +73,15 @@ describe('Dify API - uploadFile', () => {
     const dataCalls = mockFormData.append.mock.calls.filter((call) => call[0] === 'data');
     expect(dataCalls.length).toBe(1);
     const dataValue = JSON.parse(dataCalls[0][1]);
-    expect(dataValue).toEqual({
-      indexing_technique: 'high_quality',
-      process_rule: {
-        mode: 'automatic',
-        rules: {},
-      },
-    });
+    expect(dataValue.indexing_technique).toBe('high_quality');
+    expect(dataValue.process_rule).toBeDefined();
+    expect(dataValue.process_rule.mode).toBe('custom');
+    expect(dataValue.process_rule.rules).toBeDefined();
+    expect(dataValue.process_rule.rules.segmentation).toBeDefined();
+    expect(dataValue.process_rule.rules.segmentation.chunking_mode).toBe('parent_child');
+    expect(dataValue.process_rule.rules.segmentation.parent_child_config).toBeDefined();
+    expect(dataValue.process_rule.rules.segmentation.parent_child_config.parent_chunk_size).toBe(1024);
+    expect(dataValue.process_rule.rules.segmentation.parent_child_config.child_chunk_size).toBe(512);
 
     // Проверяем, что запрос отправлен с правильными заголовками
     expect(difyClient.post).toHaveBeenCalledWith(

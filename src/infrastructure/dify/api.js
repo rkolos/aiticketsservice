@@ -3,6 +3,7 @@ const difyClient = require('./client');
 const { DifyApiError } = require('../../core/errors');
 const logger = require('../../utils/logger');
 const config = require('../../config');
+const { DATASET_PROCESS_RULES } = require('../../core/constants');
 
 /**
  * Группа 1: Workflow & Chat
@@ -146,6 +147,7 @@ async function createDataset(apiKey, name) {
       {
         name,
         permission: 'only_me',
+        indexing_technique: 'high_quality',
       },
       {
         headers: {
@@ -191,6 +193,70 @@ async function deleteDataset(apiKey, datasetId) {
 }
 
 /**
+ * Обновить настройки поиска (Retrieval) для датасета
+ * Устанавливает Hybrid Search с Rerank моделью
+ * @param {string} apiKey - Admin API ключ
+ * @param {string} datasetId - ID датасета
+ * @returns {Promise<Object>} Результат обновления настроек
+ */
+async function updateDatasetRetrievalSettings(apiKey, datasetId) {
+  try {
+    // Конфигурация для Hybrid Search с Rerank
+    const retrievalModel = {
+      search_method: 'hybrid_search',
+      reranking_enable: true,
+      reranking_mode: 'reranking_model',
+      reranking_model: {
+        reranking_provider_name: 'jina',
+        reranking_model_name: 'jina-reranker-v2-base-multilingual',
+      },
+      weights: 0.7, // Приоритет семантики (0.7) над ключевыми словами
+      top_k: 7,
+      score_threshold_enabled: true,
+      score_threshold: 0.5,
+    };
+
+    const response = await difyClient.post(
+      `/datasets/${datasetId}/retrieval-setting`,
+      {
+        retrieval_model: retrievalModel,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      }
+    );
+
+    logger.info('Dataset retrieval settings updated', {
+      datasetId,
+      search_method: retrievalModel.search_method,
+    });
+
+    return response.data || { success: true };
+  } catch (error) {
+    // Если Rerank модель не подключена, логируем предупреждение, но не выбрасываем ошибку
+    if (error.response && error.response.status === 400) {
+      const errorMessage = error.response.data?.message || error.message;
+      if (errorMessage.includes('rerank') || errorMessage.includes('reranking')) {
+        logger.warn('Hybrid Search cannot be enabled: Rerank model not configured in Dify', {
+          datasetId,
+          error: errorMessage,
+        });
+        // Возвращаем объект с флагом, что настройка не применена
+        return { success: false, reason: 'rerank_model_not_configured', error: errorMessage };
+      }
+    }
+
+    logger.error('Error updating dataset retrieval settings', {
+      datasetId,
+      error: error.message,
+    });
+    throw error;
+  }
+}
+
+/**
  * Группа 3: Работа с документами и Поиск (Retrieval)
  */
 
@@ -210,10 +276,7 @@ async function createDocumentByText(apiKey, datasetId, name, text) {
         name,
         text,
         indexing_technique: 'high_quality',
-        process_rule: {
-          mode: 'automatic',
-          rules: {},
-        },
+        process_rule: DATASET_PROCESS_RULES,
       },
       {
         headers: {
@@ -259,10 +322,7 @@ async function uploadFile(apiKey, datasetId, fileStream, fileName, user = 'syste
     // Параметры индексации: отправляем только data (как в официальной схеме)
     const dataField = JSON.stringify({
       indexing_technique: 'high_quality',
-      process_rule: {
-        mode: 'automatic',
-        rules: {},
-      },
+      process_rule: DATASET_PROCESS_RULES,
     });
     formData.append('data', dataField);
 
@@ -641,6 +701,7 @@ module.exports = {
   listDatasets,
   createDataset,
   deleteDataset,
+  updateDatasetRetrievalSettings,
   // Documents & Retrieval
   createDocumentByText,
   uploadFile,

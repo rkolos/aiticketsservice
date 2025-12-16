@@ -195,6 +195,47 @@ class OrganizationService {
   }
 
   /**
+   * Убедиться, что у датасета настроен Hybrid Search
+   * @param {string} datasetId - ID датасета
+   * @returns {Promise<boolean>} true если настройки применены успешно, false если Rerank модель не настроена
+   */
+  async ensureDatasetRetrievalSettings(datasetId) {
+    if (!datasetId) {
+      logger.warn('ensureDatasetRetrievalSettings: datasetId is required');
+      return false;
+    }
+
+    const adminKey = config.dify.keys.admin;
+    if (!adminKey) {
+      logger.warn('ensureDatasetRetrievalSettings: Dify admin key is not configured');
+      return false;
+    }
+
+    try {
+      const result = await difyApi.updateDatasetRetrievalSettings(adminKey, datasetId);
+      
+      if (result.success === false && result.reason === 'rerank_model_not_configured') {
+        logger.warn('ensureDatasetRetrievalSettings: Hybrid Search not enabled (Rerank model not configured)', {
+          datasetId,
+        });
+        return false;
+      }
+
+      logger.info('ensureDatasetRetrievalSettings: Hybrid Search enabled', {
+        datasetId,
+      });
+      return true;
+    } catch (error) {
+      logger.error('ensureDatasetRetrievalSettings: error updating retrieval settings', {
+        datasetId,
+        error: error.message,
+      });
+      // Не выбрасываем ошибку, так как это не критично для работы системы
+      return false;
+    }
+  }
+
+  /**
    * Lazy Loading для базы файлов (Admin KB)
    * Гарантирует существование базы знаний для организации, создавая её при необходимости
    * Алгоритм: Cache First -> Dify Search -> Lazy Create
@@ -281,6 +322,9 @@ class OrganizationService {
           orgId,
           adminKbId,
         });
+
+        // Устанавливаем Hybrid Search для нового датасета
+        await this.ensureDatasetRetrievalSettings(adminKbId);
       } catch (error) {
         logger.error('ensureAdminKb: error creating dataset', {
           orgId,
@@ -404,6 +448,9 @@ class OrganizationService {
           orgId,
           historyKbId,
         });
+
+        // Устанавливаем Hybrid Search для нового датасета
+        await this.ensureDatasetRetrievalSettings(historyKbId);
       } catch (error) {
         logger.error('ensureHistoryKb: error creating dataset', {
           orgId,
