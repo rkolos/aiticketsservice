@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 const { KbNotFoundError } = require('../core/errors');
 const difyApi = require('../infrastructure/dify/api');
 const config = require('../config');
+const { HYBRID_RETRIEVAL_CONFIG } = require('../core/constants');
 
 /**
  * Сервис для управления данными организаций и базами знаний
@@ -197,9 +198,10 @@ class OrganizationService {
   /**
    * Убедиться, что у датасета настроен Hybrid Search
    * @param {string} datasetId - ID датасета
+   * @param {Object} retrievalModel - Опциональная конфигурация поиска (по умолчанию используется HYBRID_RETRIEVAL_CONFIG)
    * @returns {Promise<boolean>} true если настройки применены успешно, false если Rerank модель не настроена
    */
-  async ensureDatasetRetrievalSettings(datasetId) {
+  async ensureDatasetRetrievalSettings(datasetId, retrievalModel) {
     if (!datasetId) {
       logger.warn('ensureDatasetRetrievalSettings: datasetId is required');
       return false;
@@ -212,7 +214,8 @@ class OrganizationService {
     }
 
     try {
-      const result = await difyApi.updateDatasetRetrievalSettings(adminKey, datasetId);
+      const configToApply = retrievalModel || HYBRID_RETRIEVAL_CONFIG;
+      const result = await difyApi.updateDatasetRetrievalSettings(adminKey, datasetId, configToApply);
       
       if (result.success === false && result.reason === 'rerank_model_not_configured') {
         logger.warn('ensureDatasetRetrievalSettings: Hybrid Search not enabled (Rerank model not configured)', {
@@ -324,7 +327,8 @@ class OrganizationService {
         });
 
         // Устанавливаем Hybrid Search для нового датасета
-        await this.ensureDatasetRetrievalSettings(adminKbId);
+        logger.info('ensureAdminKb: applying Hybrid Search settings', { orgId, adminKbId });
+        await difyApi.updateDatasetRetrievalSettings(adminKey, adminKbId, HYBRID_RETRIEVAL_CONFIG);
       } catch (error) {
         logger.error('ensureAdminKb: error creating dataset', {
           orgId,
@@ -450,7 +454,8 @@ class OrganizationService {
         });
 
         // Устанавливаем Hybrid Search для нового датасета
-        await this.ensureDatasetRetrievalSettings(historyKbId);
+        logger.info('ensureHistoryKb: applying Hybrid Search settings', { orgId, historyKbId });
+        await difyApi.updateDatasetRetrievalSettings(adminKey, historyKbId, HYBRID_RETRIEVAL_CONFIG);
       } catch (error) {
         logger.error('ensureHistoryKb: error creating dataset', {
           orgId,

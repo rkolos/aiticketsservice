@@ -881,6 +881,88 @@ function sleep(ms) {
 }
 
 /**
+ * Умное ожидание окончания индексации файлов
+ * Проверяет статус файлов через CMD_KB_LIST_FILES и ждет, пока все файлы не будут проиндексированы
+ * @param {Queue} entryQueueInstance - Экземпляр очереди для отправки команд
+ * @param {string} orgId - ID организации
+ * @param {number} timeoutMs - Таймаут в миллисекундах (по умолчанию 60000)
+ * @returns {Promise<boolean>} true если все файлы проиндексированы, false при таймауте
+ */
+async function waitForIndexing(entryQueueInstance, orgId, timeoutMs = 60000) {
+  console.log(colorize('⏳ Waiting for files to finish indexing...', 'yellow'));
+  const start = Date.now();
+  
+  while (Date.now() - start < timeoutMs) {
+    const traceId = uuidv4();
+    
+    // Создаем Promise для ожидания результата
+    let timeoutId;
+    const checkPromise = new Promise((resolve) => {
+      timeoutId = setTimeout(() => {
+        if (pendingResults.has(traceId)) {
+          pendingResults.delete(traceId);
+        }
+        resolve(null); // Timeout конкретного запроса
+      }, 5000);
+
+      pendingResults.set(traceId, {
+        resolve: (result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timeoutId);
+          resolve(null);
+        },
+        jobName: 'CMD_KB_LIST_FILES',
+        timeoutId,
+      });
+    });
+
+    try {
+      await entryQueueInstance.add('CMD_KB_LIST_FILES', { 
+        orgId, 
+        meta: { traceId, debugTag: 'wait-for-indexing' } 
+      });
+
+      const result = await checkPromise;
+      
+      if (result && result.data && result.data.success) {
+        const files = result.data.data?.items || [];
+        
+        if (files.length === 0) {
+          console.log('   ... no files found yet');
+          await sleep(3000);
+          continue;
+        }
+        
+        const allCompleted = files.every(f => f.status === 'completed' || f.status === 'error');
+        
+        if (allCompleted) {
+          console.log(colorize(`✓ All ${files.length} files indexed`, 'green'));
+          return true;
+        }
+        
+        const indexingCount = files.filter(f => f.status === 'indexing' || f.status === 'queuing').length;
+        const completedCount = files.filter(f => f.status === 'completed').length;
+        const errorCount = files.filter(f => f.status === 'error').length;
+        
+        console.log(`   ... still indexing: ${indexingCount} files (completed: ${completedCount}, errors: ${errorCount})`);
+      } else {
+        console.log('   ... waiting for file list response...');
+      }
+    } catch (error) {
+      console.log(`   ... error checking file status: ${error.message}`);
+    }
+
+    await sleep(3000); // Ждем 3 секунды перед следующей проверкой
+  }
+  
+  console.log(colorize('⚠️ Timeout waiting for indexing', 'red'));
+  return false;
+}
+
+/**
  * Проверка healthcheck сервиса (HTTP API: Healthcheck)
  * @returns {Promise<boolean>} true если healthcheck доступен и возвращает healthy
  */
@@ -1347,8 +1429,8 @@ async function main() {
       entryQueue
     );
       testResults.push({ name: 'CMD_KB_ADD_FILE (second)', passed: test4 });
-      // Даем время на индексацию файлов перед использованием в RAG
-      await sleep(5000);
+      // Ждем окончания индексации файлов перед использованием в RAG
+      await waitForIndexing(entryQueue, 'test-org-smoke');
       
       // Синхронизируем кэш, чтобы база знаний была доступна для CMD_GEN_RESPONSE
       console.log(colorize('⏳ Syncing cache to ensure knowledge base is available...', 'yellow'));

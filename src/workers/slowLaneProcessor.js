@@ -33,6 +33,10 @@ async function slowLaneProcessor(job) {
       return handleSysResyncCache(job);
     case 'CMD_CLEANUP_ORG':
       return handleCleanupOrg(job);
+    case 'CMD_KB_LIST_FILES':
+      return handleKbListFiles(job);
+    case 'CMD_KB_DELETE_FILE':
+      return handleKbDeleteFile(job);
     default:
       logger.warn('Unhandled slow-lane job type', { jobName: job.name });
       return { status: 'ignored', jobId: job.id, jobName: job.name };
@@ -572,6 +576,95 @@ async function handleCleanupOrg(job) {
 
     await ErrorHandler.handleDifyResourceError(error, orgId);
 
+    throw error;
+  }
+}
+
+/**
+ * Получение списка файлов организации
+ * (Нужно для проверки статуса индексации в тестах)
+ */
+async function handleKbListFiles(job) {
+  const { orgId, page, limit, meta = {} } = job.data || {};
+  const adminKey = config.dify.keys.admin;
+
+  try {
+    if (!adminKey) throw new Error('Dify admin key is not configured');
+    if (!orgId) throw new Error('orgId is required');
+
+    // Получаем ID базы
+    const { adminKbId } = await OrganizationService.getKbIdsOrThrow(orgId);
+
+    // Запрашиваем документы из Dify
+    const result = await difyApi.listDocuments(adminKey, adminKbId, page || 1, limit || 20);
+
+    const startTime = Date.now();
+    
+    // Форматируем список для ответа
+    const items = (result.data || []).map(doc => ({
+      id: doc.id,
+      name: doc.name,
+      status: doc.indexing_status || doc.status,
+      word_count: doc.word_count,
+      created_at: doc.created_at
+    }));
+
+    const payload = formatSuccess(
+      {
+        items: items,
+        count: result.total || items.length,
+        page: result.page,
+        limit: result.limit,
+        has_more: result.has_more
+      },
+      meta,
+      job.id,
+      startTime
+    );
+
+    await sendResult('CMD_KB_LIST_FILES', payload, meta);
+    return payload;
+  } catch (error) {
+    logger.error('CMD_KB_LIST_FILES failed', { orgId, error: error.message });
+    await ErrorHandler.handleDifyResourceError(error, orgId);
+    throw error;
+  }
+}
+
+/**
+ * Удаление файла из базы знаний
+ */
+async function handleKbDeleteFile(job) {
+  const { orgId, fileId, documentId, meta = {} } = job.data || {};
+  const adminKey = config.dify.keys.admin;
+  const targetId = documentId || fileId; // Поддержка обоих полей
+
+  try {
+    if (!adminKey) throw new Error('Dify admin key is not configured');
+    if (!orgId) throw new Error('orgId is required');
+    if (!targetId) throw new Error('documentId (or fileId) is required');
+
+    const { adminKbId } = await OrganizationService.getKbIdsOrThrow(orgId);
+
+    await difyApi.deleteDocument(adminKey, adminKbId, targetId);
+
+    const startTime = Date.now();
+    const payload = formatSuccess(
+      { 
+        deleted: true, 
+        documentId: targetId, 
+        orgId 
+      },
+      meta,
+      job.id,
+      startTime
+    );
+    
+    await sendResult('CMD_KB_DELETE_FILE', payload, meta);
+    return payload;
+  } catch (error) {
+    logger.error('CMD_KB_DELETE_FILE failed', { orgId, documentId: targetId, error: error.message });
+    await ErrorHandler.handleDifyResourceError(error, orgId);
     throw error;
   }
 }

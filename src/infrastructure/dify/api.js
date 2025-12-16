@@ -197,29 +197,20 @@ async function deleteDataset(apiKey, datasetId) {
  * Устанавливает Hybrid Search с Rerank моделью
  * @param {string} apiKey - Admin API ключ
  * @param {string} datasetId - ID датасета
+ * @param {Object} retrievalModel - Опциональная конфигурация поиска (по умолчанию используется HYBRID_RETRIEVAL_CONFIG)
  * @returns {Promise<Object>} Результат обновления настроек
  */
-async function updateDatasetRetrievalSettings(apiKey, datasetId) {
+async function updateDatasetRetrievalSettings(apiKey, datasetId, retrievalModel) {
+  const { HYBRID_RETRIEVAL_CONFIG } = require('../core/constants');
+  
   try {
-    // Конфигурация для Hybrid Search с Rerank
-    const retrievalModel = {
-      search_method: 'hybrid_search',
-      reranking_enable: true,
-      reranking_mode: 'reranking_model',
-      reranking_model: {
-        reranking_provider_name: 'jina',
-        reranking_model_name: 'jina-reranker-v2-base-multilingual',
-      },
-      weights: 0.7, // Приоритет семантики (0.7) над ключевыми словами
-      top_k: 7,
-      score_threshold_enabled: true,
-      score_threshold: 0.5,
-    };
+    // Используем переданную конфигурацию или конфигурацию по умолчанию
+    const configToApply = retrievalModel || HYBRID_RETRIEVAL_CONFIG;
 
     const response = await difyClient.post(
       `/datasets/${datasetId}/retrieval-setting`,
       {
-        retrieval_model: retrievalModel,
+        retrieval_model: configToApply,
       },
       {
         headers: {
@@ -230,7 +221,7 @@ async function updateDatasetRetrievalSettings(apiKey, datasetId) {
 
     logger.info('Dataset retrieval settings updated', {
       datasetId,
-      search_method: retrievalModel.search_method,
+      search_method: configToApply.search_method,
     });
 
     return response.data || { success: true };
@@ -640,19 +631,39 @@ async function retrieve(datasetId, query, retrievalConfig = {}) {
  */
 async function simplifyUserQuery(query, userId = 'system') {
   try {
+    const querySimplifierKey = config.dify.keys.querySimplifier;
+    
+    if (!querySimplifierKey) {
+      logger.warn('Query simplifier key is not configured, using original query');
+      return {
+        query: query,
+        usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+          model: null,
+        },
+      };
+    }
+
     const inputs = {
       question: query
     };
 
-    const response = await runWorkflow(config.dify.keys.querySimplifier, inputs, userId);
+    logger.info('Calling query simplifier workflow', {
+      workflowKey: querySimplifierKey.substring(0, 20) + '...',
+      userId,
+      queryLength: query.length,
+    });
+
+    const response = await runWorkflow(querySimplifierKey, inputs, userId);
 
 
     // Извлекаем результат из workflow ответа
     const simplifiedQuery = response?.outputs?.text || response?.text || query;
 
     // Извлекаем usage через BillingService
-    const BillingService = require('../services/BillingService');
-    const config = require('../config');
+    const BillingService = require('../../services/BillingService');
     const usage = BillingService.extractUsage(response);
 
 
