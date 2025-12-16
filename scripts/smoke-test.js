@@ -881,6 +881,86 @@ function sleep(ms) {
 }
 
 /**
+ * Очистка Redis от данных воркеров (очереди BullMQ и кэш организаций)
+ * Используется для очистки мусора от предыдущих тестов
+ * @param {Redis} redis - Экземпляр соединения Redis
+ * @returns {Promise<number>} Количество удаленных ключей
+ */
+async function cleanupRedisQueues(redis) {
+  try {
+    console.log(colorize('🧹 Cleaning Redis queues from previous test runs...', 'yellow'));
+    
+    let totalDeleted = 0;
+
+    // Очищаем очереди BullMQ
+    for (const [key, queueName] of Object.entries(QUEUES)) {
+      const pattern = `bull:${queueName}:*`;
+      const stream = redis.scanStream({
+        match: pattern,
+        count: 100,
+      });
+
+      const keysToDelete = [];
+      
+      await new Promise((resolve, reject) => {
+        stream.on('data', (keys) => {
+          keysToDelete.push(...keys);
+        });
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+
+      if (keysToDelete.length > 0) {
+        // Удаляем батчами по 100 ключей
+        for (let i = 0; i < keysToDelete.length; i += 100) {
+          const batch = keysToDelete.slice(i, i + 100);
+          await redis.del(...batch);
+          totalDeleted += batch.length;
+        }
+      }
+    }
+
+    // Очищаем кэш организаций
+    const orgCachePattern = 'ticket-ai:org:*';
+    const orgStream = redis.scanStream({
+      match: orgCachePattern,
+      count: 100,
+    });
+
+    const orgKeysToDelete = [];
+    
+    await new Promise((resolve, reject) => {
+      orgStream.on('data', (keys) => {
+        orgKeysToDelete.push(...keys);
+      });
+      orgStream.on('end', resolve);
+      orgStream.on('error', reject);
+    });
+
+    if (orgKeysToDelete.length > 0) {
+      // Удаляем батчами по 100 ключей
+      for (let i = 0; i < orgKeysToDelete.length; i += 100) {
+        const batch = orgKeysToDelete.slice(i, i + 100);
+        await redis.del(...batch);
+        totalDeleted += batch.length;
+      }
+    }
+
+    if (totalDeleted > 0) {
+      console.log(colorize(`✓ Cleaned ${totalDeleted} keys from Redis\n`, 'green'));
+    } else {
+      console.log(colorize('✓ Redis queues are already clean\n', 'green'));
+    }
+
+    return totalDeleted;
+  } catch (error) {
+    console.error(colorize(`⚠️  Error cleaning Redis: ${error.message}`, 'yellow'));
+    console.error(colorize('   Continuing with tests anyway...\n', 'yellow'));
+    return 0;
+  }
+}
+
+/**
  * Умное ожидание окончания индексации файлов
  * Проверяет статус файлов через CMD_KB_LIST_FILES и ждет, пока все файлы не будут проиндексированы
  * @param {Queue} entryQueueInstance - Экземпляр очереди для отправки команд
@@ -1286,7 +1366,10 @@ async function main() {
     process.exit(1);
   }
   
-  // Создаем очереди после подключения
+  // Очищаем Redis от мусора предыдущих тестов
+  await cleanupRedisQueues(redisConnection);
+  
+  // Создаем очереди после подключения и очистки
   const entryQueue = new Queue(QUEUES.ENTRY, { connection: redisConnection });
   const resultsQueue = new Queue(QUEUES.RESULTS, { connection: redisConnection });
 
