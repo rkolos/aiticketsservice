@@ -335,6 +335,13 @@ async function handleGenResponse(job) {
       throw new Error('Dify admin key is not configured');
     }
 
+    // КРИТИЧЕСКОЕ ЛОГИРОВАНИЕ: что передается в retrieve
+    logger.error('=== BEFORE RETRIEVE CALL ===');
+    logger.error('processedQuery (what will be sent to retrieve):', processedQuery);
+    logger.error('processedQuery length:', processedQuery.length);
+    logger.error('original query length:', query.length);
+    logger.error('ARE EQUAL:', query === processedQuery);
+    
     const searchPromises = [
       adminKbId ? difyApi.retrieve(adminKbId, processedQuery) : Promise.resolve([]),
       historyKbId ? difyApi.retrieveChunks(adminKey, historyKbId, processedQuery, 5) : Promise.resolve([])

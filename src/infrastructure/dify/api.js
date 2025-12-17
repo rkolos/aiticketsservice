@@ -686,69 +686,38 @@ async function simplifyUserQuery(query, userId = 'system') {
 
     const response = await runWorkflow(querySimplifierKey, inputs, userId);
 
-    // Логируем полный ответ workflow для отладки
-    console.error('=== QUERY SIMPLIFIER WORKFLOW RESPONSE DEBUG ===');
-    console.error('Full response:', JSON.stringify(response, null, 2));
-    console.error('response.outputs:', response?.outputs);
-    console.error('response.data:', response?.data);
-    console.error('response.text:', response?.text);
-    logger.error('Query simplifier workflow response DEBUG', {
-      hasResponse: !!response,
-      responseType: typeof response,
-      responseKeys: response && typeof response === 'object' ? Object.keys(response) : [],
-      hasOutputs: !!response?.outputs,
-      outputsType: typeof response?.outputs,
-      outputsKeys: response?.outputs && typeof response.outputs === 'object' ? Object.keys(response.outputs) : [],
-      hasData: !!response?.data,
-      dataKeys: response?.data && typeof response.data === 'object' ? Object.keys(response.data) : [],
-      hasText: !!response?.text,
-      outputsText: response?.outputs?.text ? response.outputs.text.substring(0, 200) : 'NOT FOUND',
-      responseText: response?.text ? response.text.substring(0, 200) : 'NOT FOUND',
-      dataOutputsText: response?.data?.outputs?.text ? response.data.outputs.text.substring(0, 200) : 'NOT FOUND',
-      fullResponse: JSON.stringify(response),
-    });
+    // ИСПРАВЛЕНИЕ: Dify Workflow возвращает outputs внутри поля 'data'
+    const outputs = 
+      response.data?.outputs || // Стандартная структура Dify Workflow
+      response.outputs ||       // На случай если структура изменится или это Chatflow
+      {};
 
-    // Извлекаем результат из workflow ответа (проверяем все возможные пути)
-    // ВАЖНО: runWorkflow возвращает response.data, поэтому структура: response.data.outputs.text
-    let simplifiedQuery = query; // fallback
-    
-    if (response?.data?.outputs?.text) {
-      simplifiedQuery = response.data.outputs.text;
-      logger.info('Using simplifiedQuery from response.data.outputs.text');
-    } else if (response?.outputs?.text) {
-      simplifiedQuery = response.outputs.text;
-      logger.info('Using simplifiedQuery from response.outputs.text');
-    } else if (response?.text) {
-      simplifiedQuery = response.text;
-      logger.info('Using simplifiedQuery from response.text');
-    } else if (response?.data?.text) {
-      simplifiedQuery = response.data.text;
-      logger.info('Using simplifiedQuery from response.data.text');
-    } else {
-      logger.warn('Query simplifier did not return simplified query, using original query as fallback', {
-        responseStructure: JSON.stringify(response).substring(0, 500),
-      });
-    }
+    // Пытаемся найти текст в разных возможных полях
+    const simplifiedQuery = 
+      outputs.text || 
+      outputs.output || 
+      outputs.answer ||
+      response.data?.answer || // Иногда бывает answer
+      response.text || 
+      query; // Fallback на оригинал
 
     // Извлекаем usage через BillingService
     const BillingService = require('../../services/BillingService');
     const usage = BillingService.extractUsage(response);
 
-
-
-    logger.error('Query simplification completed - FINAL RESULT', {
+    logger.info('Query simplification completed', {
       originalLength: query.length,
       simplifiedLength: simplifiedQuery.length,
-      originalQuery: query,
-      simplifiedQuery: simplifiedQuery,
-      areEqual: query === simplifiedQuery,
+      originalQuery: query.substring(0, 50),
+      simplifiedQuery: simplifiedQuery.substring(0, 50),
+      isDifferent: query !== simplifiedQuery, // Полезный флаг для логов
       usage: {
         promptTokens: usage.prompt_tokens,
         completionTokens: usage.completion_tokens,
         totalTokens: usage.total_tokens,
       },
     });
-
+    
     // Возвращаем объект с query и usage
     return {
       query: simplifiedQuery.trim(),
