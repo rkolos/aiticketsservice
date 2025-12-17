@@ -187,6 +187,37 @@ async function handleKbAddFile(job) {
       payload.meta.usage = fileUsage;
     }
 
+    // 5) Явно обновляем кэш для одной организации (легкая операция - одна Redis SET)
+    // Это критично для последующих операций (например, CMD_KB_LIST_FILES)
+    // ensureAdminKb уже должен был сохранить, но делаем явное сохранение на всякий случай
+    // ВАЖНО: обновляем только одну запись для конкретной orgId, НЕ весь кэш
+    try {
+      const redisCache = require('../infrastructure/redis/cache');
+      // Получаем существующие данные из кэша, чтобы сохранить historyKbId (если есть)
+      const cachedData = await redisCache.getOrgDatasets(orgId).catch(() => null);
+      const existingHistoryKbId = cachedData?.historyKbId || null;
+      
+      // Сохраняем только одну запись для этой организации (O(1) операция Redis SET)
+      await redisCache.setOrgDatasets(orgId, {
+        adminKbId,
+        historyKbId: existingHistoryKbId,
+      });
+      
+      logger.debug('CMD_KB_ADD_FILE: cache explicitly updated after file upload', {
+        orgId,
+        adminKbId,
+        existingHistoryKbId,
+      });
+    } catch (cacheError) {
+      // Если обновление кэша не удалось, логируем, но не прерываем выполнение
+      // База знаний уже создана/найдена и файл загружен
+      logger.warn('CMD_KB_ADD_FILE: failed to update cache after upload', {
+        orgId,
+        adminKbId,
+        error: cacheError.message,
+      });
+    }
+
     await sendResult('CMD_KB_ADD_FILE', payload, resultMeta);
     return payload;
   } catch (error) {
@@ -592,8 +623,9 @@ async function handleKbListFiles(job) {
     if (!adminKey) throw new Error('Dify admin key is not configured');
     if (!orgId) throw new Error('orgId is required');
 
-    // Получаем ID базы
-    const { adminKbId } = await OrganizationService.getKbIdsOrThrow(orgId);
+    // Получаем ID базы знаний (для CMD_KB_LIST_FILES нужен только adminKbId)
+    // Используем ensureAdminKb вместо getKbIdsOrThrow, так как historyKbId может еще не существовать
+    const adminKbId = await OrganizationService.ensureAdminKb(orgId);
 
     // Запрашиваем документы из Dify
     const result = await difyApi.listDocuments(adminKey, adminKbId, page || 1, limit || 20);

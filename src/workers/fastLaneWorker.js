@@ -974,27 +974,17 @@ async function handleKbListFiles(job) {
       throw new Error('Dify admin key is not configured');
     }
 
+    // Для CMD_KB_LIST_FILES нужен только adminKbId, historyKbId не обязателен
+    // Используем ensureAdminKb вместо getKbIdsOrThrow, так как historyKbId может еще не существовать
     let adminKbId;
     try {
-      const kbIds = await OrganizationService.getKbIdsOrThrow(orgId);
-      adminKbId = kbIds.adminKbId;
+      adminKbId = await OrganizationService.ensureAdminKb(orgId);
     } catch (error) {
-      if (error instanceof KbNotFoundError) {
-        logger.info('CMD_KB_LIST_FILES: Knowledge base not found, returning empty list', {
-          jobId: job.id,
-          orgId,
-        });
-
-        const result = formatSuccess(
-          wrapArray([]),
-          meta,
-          job.id,
-          startTime
-        );
-
-        await sendResult('CMD_KB_LIST_FILES', result, meta);
-        return;
-      }
+      logger.error('CMD_KB_LIST_FILES: Failed to ensure admin KB', {
+        jobId: job.id,
+        orgId,
+        error: error.message,
+      });
       throw error;
     }
 

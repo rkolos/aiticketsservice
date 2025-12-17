@@ -61,7 +61,7 @@ async function debugRAGTest() {
       } else {
         // Логируем, если traceId не найден
         if (!traceId) {
-          console.log(colorize(`   ⚠️  No traceId in result data`, 'yellow'));
+          console.log(colorize('   ⚠️  No traceId in result data', 'yellow'));
         } else {
           console.log(colorize(`   ⚠️  TraceId ${traceId.substring(0, 8)} not found in debugPendingResults`, 'yellow'));
         }
@@ -467,7 +467,7 @@ function initConsumer() {
       } else {
         // Логируем, если traceId не найден
         if (!traceId) {
-          console.log(colorize(`   ⚠️  No traceId in result data`, 'yellow'));
+          console.log(colorize('   ⚠️  No traceId in result data', 'yellow'));
         } else {
           console.log(colorize(`   ⚠️  TraceId ${traceId.substring(0, 8)} not found in pendingResults`, 'yellow'));
         }
@@ -661,12 +661,12 @@ const validators = {
     if (hasTitle) console.log(`   > Title: ${result.title}`);
     if (hasSentiment) console.log(`   > Sentiment: ${result.sentiment}`);
     if (hasUsage) {
-      console.log(`   > Usage in meta: ✓`);
+      console.log('   > Usage in meta: ✓');
       if (data.meta.usage.stages) {
         console.log(`   > Usage stages: ${data.meta.usage.stages.length}`);
       }
     } else {
-      console.log(`   > Usage in meta: ⚠️  (optional, not present)`);
+      console.log('   > Usage in meta: ⚠️  (optional, not present)');
     }
     return hasTitle && hasSentiment;
   },
@@ -689,7 +689,7 @@ const validators = {
       console.log(`   > Content: ${preview}${result.content.length > 80 ? '...' : ''}`);
     }
     if (hasUsage) {
-      console.log(`   > Usage in meta: ✓`);
+      console.log('   > Usage in meta: ✓');
       if (data.meta.usage.stages) {
         console.log(`   > Usage stages: ${data.meta.usage.stages.length}`);
       }
@@ -726,7 +726,7 @@ const validators = {
       console.log(`   > Source content: ${result.sourceContent.substring(0, 50)}...`);
     }
     if (hasUsage) {
-      console.log(`   > Usage in meta: ✓`);
+      console.log('   > Usage in meta: ✓');
     }
     return hasContent && hasCyrillic && hasUsage;
   },
@@ -757,7 +757,7 @@ const validators = {
     if (hasUsage) {
       console.log(`   > Usage stages in meta: ${data.meta.usage.stages.length}`);
     } else {
-      console.log(`   > Usage in meta: ⚠️  (optional, not present)`);
+      console.log('   > Usage in meta: ⚠️  (optional, not present)');
     }
     // Для CMD_ARCHIVE_TICKET usage опционален - основная цель - архивация тикета
     return hasDocumentId;
@@ -794,7 +794,7 @@ const validators = {
     const hasDeleted = result.deleted === true || result.deleted === 'true';
     // Проверяем documentId вместо fileId
     const hasDocumentId = result.documentId && typeof result.documentId === 'string';
-    if (hasDeleted) console.log(`   > Deleted: true`);
+    if (hasDeleted) console.log('   > Deleted: true');
     if (hasDocumentId) console.log(`   > Document ID: ${result.documentId}`);
     return hasDeleted || hasDocumentId;
   },
@@ -965,10 +965,10 @@ async function cleanupRedisQueues(redis) {
  * Проверяет статус файлов через CMD_KB_LIST_FILES и ждет, пока все файлы не будут проиндексированы
  * @param {Queue} entryQueueInstance - Экземпляр очереди для отправки команд
  * @param {string} orgId - ID организации
- * @param {number} timeoutMs - Таймаут в миллисекундах (по умолчанию 60000)
+ * @param {number} timeoutMs - Таймаут в миллисекундах (по умолчанию 30000)
  * @returns {Promise<boolean>} true если все файлы проиндексированы, false при таймауте
  */
-async function waitForIndexing(entryQueueInstance, orgId, timeoutMs = 60000) {
+async function waitForIndexing(entryQueueInstance, orgId, timeoutMs = 30000) {
   console.log(colorize('⏳ Waiting for files to finish indexing...', 'yellow'));
   const start = Date.now();
   
@@ -976,6 +976,7 @@ async function waitForIndexing(entryQueueInstance, orgId, timeoutMs = 60000) {
     const traceId = uuidv4();
     
     // Создаем Promise для ожидания результата
+    // Используем таймаут 10 секунд, как в работающем тесте runTest
     let timeoutId;
     const checkPromise = new Promise((resolve) => {
       timeoutId = setTimeout(() => {
@@ -983,7 +984,7 @@ async function waitForIndexing(entryQueueInstance, orgId, timeoutMs = 60000) {
           pendingResults.delete(traceId);
         }
         resolve(null); // Timeout конкретного запроса
-      }, 5000);
+      }, 10000);
 
       pendingResults.set(traceId, {
         resolve: (result) => {
@@ -1000,10 +1001,25 @@ async function waitForIndexing(entryQueueInstance, orgId, timeoutMs = 60000) {
     });
 
     try {
-      await entryQueueInstance.add('CMD_KB_LIST_FILES', { 
-        orgId, 
-        meta: { traceId, debugTag: 'wait-for-indexing' } 
-      });
+      // Используем ту же структуру данных, что и в работающем тесте runTest
+      const jobData = {
+        orgId,
+        meta: {
+          traceId,
+          debugTag: `wait-for-indexing-${Math.random().toString(16).slice(2, 8)}`,
+          nested: { ts: Date.now() },
+        },
+      };
+      
+      // Логируем отправляемые данные для отладки
+      console.log(
+        colorize(`[${getTime()}]`, 'blue') +
+        colorize(' 📤 SENT', 'bright') +
+        ` (${QUEUES.ENTRY}): ${colorize('CMD_KB_LIST_FILES', 'magenta')} | TraceID: ${colorize(traceId.substring(0, 8), 'yellow')}`
+      );
+      console.log('   Payload (full):', JSON.stringify(jobData, null, 2));
+      
+      await entryQueueInstance.add('CMD_KB_LIST_FILES', jobData);
 
       const result = await checkPromise;
       
@@ -1012,24 +1028,49 @@ async function waitForIndexing(entryQueueInstance, orgId, timeoutMs = 60000) {
         
         if (files.length === 0) {
           console.log('   ... no files found yet');
+          console.log('   Result (full):', JSON.stringify(result, null, 2));
           await sleep(3000);
           continue;
         }
         
-        const allCompleted = files.every(f => f.status === 'completed' || f.status === 'error');
+        // Dify может возвращать разные статусы: 'completed', 'available', 'indexing', 'queuing', 'error'
+        // 'available' означает, что файл проиндексирован и готов к использованию (эквивалент 'completed')
+        const completedStatuses = ['completed', 'available'];
+        const errorStatuses = ['error', 'failed'];
+        const indexingStatuses = ['indexing', 'queuing', 'parsing'];
+        
+        const allCompleted = files.every(f => 
+          completedStatuses.includes(f.status) || errorStatuses.includes(f.status)
+        );
         
         if (allCompleted) {
-          console.log(colorize(`✓ All ${files.length} files indexed`, 'green'));
+          const availableCount = files.filter(f => completedStatuses.includes(f.status)).length;
+          const errorCount = files.filter(f => errorStatuses.includes(f.status)).length;
+          console.log(colorize(`✓ All ${files.length} files indexed (${availableCount} available, ${errorCount} errors)`, 'green'));
           return true;
         }
         
-        const indexingCount = files.filter(f => f.status === 'indexing' || f.status === 'queuing').length;
-        const completedCount = files.filter(f => f.status === 'completed').length;
-        const errorCount = files.filter(f => f.status === 'error').length;
+        const indexingCount = files.filter(f => indexingStatuses.includes(f.status)).length;
+        const completedCount = files.filter(f => completedStatuses.includes(f.status)).length;
+        const errorCount = files.filter(f => errorStatuses.includes(f.status)).length;
+        const unknownCount = files.filter(f => 
+          !completedStatuses.includes(f.status) && 
+          !errorStatuses.includes(f.status) && 
+          !indexingStatuses.includes(f.status)
+        ).length;
         
-        console.log(`   ... still indexing: ${indexingCount} files (completed: ${completedCount}, errors: ${errorCount})`);
+        // Выводим детальную информацию о статусах файлов
+        if (files.length > 0) {
+          const statusDetails = files.map(f => `${f.name || f.id}: ${f.status || 'unknown'}`).join(', ');
+          console.log(`   ... statuses: ${statusDetails}`);
+        }
+        
+        console.log(`   ... still indexing: ${indexingCount} files (completed/available: ${completedCount}, errors: ${errorCount}${unknownCount > 0 ? `, unknown: ${unknownCount}` : ''})`);
       } else {
         console.log('   ... waiting for file list response...');
+        if (result) {
+          console.log('   Result (full):', JSON.stringify(result, null, 2));
+        }
       }
     } catch (error) {
       console.log(`   ... error checking file status: ${error.message}`);
@@ -1055,7 +1096,7 @@ async function checkHealthcheck() {
 
     return new Promise((resolve) => {
       const timeoutPromise = setTimeout(() => {
-        console.error(colorize(`\n❌ Healthcheck API timeout (5s)`, 'red'));
+        console.error(colorize('\n❌ Healthcheck API timeout (5s)', 'red'));
         console.error(colorize(`   URL: ${url}`, 'yellow'));
         console.error(colorize('Please ensure healthcheck server is running', 'yellow'));
         resolve(false);
@@ -1081,7 +1122,7 @@ async function checkHealthcheck() {
               console.log('');
               
               if (response.status === 'healthy') {
-                console.log(colorize(`✓ Healthcheck API is healthy\n`, 'green'));
+                console.log(colorize('✓ Healthcheck API is healthy\n', 'green'));
                 if (response.checks) {
                   console.log('   Checks:');
                   if (response.checks.redis) {
@@ -1101,7 +1142,7 @@ async function checkHealthcheck() {
                 }
                 resolve(true);
               } else {
-                console.error(colorize(`\n❌ Healthcheck API returned unhealthy status`, 'red'));
+                console.error(colorize('\n❌ Healthcheck API returned unhealthy status', 'red'));
                 console.error(colorize(`   Status: ${response.status}`, 'yellow'));
                 if (response.checks) {
                   console.error('   Failed checks:');
@@ -1122,7 +1163,7 @@ async function checkHealthcheck() {
                 resolve(false);
               }
             } catch (parseError) {
-              console.error(colorize(`\n❌ Healthcheck API returned invalid JSON`, 'red'));
+              console.error(colorize('\n❌ Healthcheck API returned invalid JSON', 'red'));
               console.error(colorize(`   Response: ${data.substring(0, 200)}`, 'yellow'));
               resolve(false);
             }
@@ -1149,7 +1190,7 @@ async function checkHealthcheck() {
       req.setTimeout(5000, () => {
         req.destroy();
         clearTimeout(timeoutPromise);
-        console.error(colorize(`\n❌ Healthcheck API request timeout`, 'red'));
+        console.error(colorize('\n❌ Healthcheck API request timeout', 'red'));
         resolve(false);
       });
     });
@@ -1186,7 +1227,7 @@ async function checkDifyApi() {
 
     await Promise.race([apiPromise, timeoutPromise]);
 
-    console.log(colorize(`✓ Dify API is accessible\n`, 'green'));
+    console.log(colorize('✓ Dify API is accessible\n', 'green'));
     return true;
   } catch (error) {
     let message = 'API unavailable';
@@ -1201,7 +1242,7 @@ async function checkDifyApi() {
     }
     // Если ошибка связана с plugin daemon, это не критично для базовой функциональности
     if (error.message && error.message.includes('plugin daemon')) {
-      console.log(colorize(`⚠ Dify API доступен, но plugin daemon недоступен (это не критично для базовых тестов)\n`, 'yellow'));
+      console.log(colorize('⚠ Dify API доступен, но plugin daemon недоступен (это не критично для базовых тестов)\n', 'yellow'));
       return true; // Продолжаем работу, так как базовые функции должны работать
     }
 
@@ -1512,10 +1553,8 @@ async function main() {
       entryQueue
     );
       testResults.push({ name: 'CMD_KB_ADD_FILE (second)', passed: test4 });
-      // Ждем окончания индексации файлов перед использованием в RAG
-      await waitForIndexing(entryQueue, 'test-org-smoke');
       
-      // Синхронизируем кэш, чтобы база знаний была доступна для CMD_GEN_RESPONSE
+      // Синхронизируем кэш ПЕРЕД проверкой статусов, чтобы база знаний была доступна для CMD_KB_LIST_FILES
       console.log(colorize('⏳ Syncing cache to ensure knowledge base is available...', 'yellow'));
       const cacheSync = await runTest(
         'CACHE SYNC: Syncing cache before RAG',
@@ -1531,6 +1570,10 @@ async function main() {
         console.log(colorize('⚠️  Cache sync failed, but continuing...', 'yellow'));
       }
       await sleep(2000);
+      
+      // Ждем окончания индексации файлов перед использованием в RAG
+      // Кэш уже синхронизирован, поэтому CMD_KB_LIST_FILES сможет найти базу знаний
+      await waitForIndexing(entryQueue, 'test-org-smoke');
     }
 
     // TEST 5: CMD_GEN_RESPONSE - вопрос о сравнении WebUI проектов по генерации изображений
