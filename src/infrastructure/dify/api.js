@@ -593,6 +593,24 @@ async function retrieve(datasetId, query, retrievalConfig = {}) {
       retrieval_model: { ...defaultModel, ...retrievalConfig }
     };
 
+    logger.error('=== DIFY RETRIEVE API REQUEST ===');
+    logger.error('QUERY SENT TO DIFY (trimmed to 250 chars):');
+    logger.error(trimmedQuery);
+    logger.error('QUERY LENGTH:', trimmedQuery.length);
+    logger.error('FULL PAYLOAD:', JSON.stringify(payload, null, 2));
+    logger.info('Dify retrieve API request payload', {
+      datasetId,
+      query: trimmedQuery, // ПОЛНЫЙ ТЕКСТ ЗАПРОСА
+      queryLength: trimmedQuery.length,
+      queryFirst100: trimmedQuery.substring(0, 100),
+      queryLast100: trimmedQuery.length > 100 ? trimmedQuery.substring(trimmedQuery.length - 100) : '',
+      retrievalModel: JSON.stringify(payload.retrieval_model),
+      scoreThreshold: payload.retrieval_model.score_threshold,
+      scoreThresholdEnabled: payload.retrieval_model.score_threshold_enabled,
+      topK: payload.retrieval_model.top_k,
+      fullPayload: JSON.stringify(payload),
+    });
+
     const response = await difyClient.post(
       `/datasets/${datasetId}/retrieve`,
       payload,
@@ -668,9 +686,49 @@ async function simplifyUserQuery(query, userId = 'system') {
 
     const response = await runWorkflow(querySimplifierKey, inputs, userId);
 
+    // Логируем полный ответ workflow для отладки
+    console.error('=== QUERY SIMPLIFIER WORKFLOW RESPONSE DEBUG ===');
+    console.error('Full response:', JSON.stringify(response, null, 2));
+    console.error('response.outputs:', response?.outputs);
+    console.error('response.data:', response?.data);
+    console.error('response.text:', response?.text);
+    logger.error('Query simplifier workflow response DEBUG', {
+      hasResponse: !!response,
+      responseType: typeof response,
+      responseKeys: response && typeof response === 'object' ? Object.keys(response) : [],
+      hasOutputs: !!response?.outputs,
+      outputsType: typeof response?.outputs,
+      outputsKeys: response?.outputs && typeof response.outputs === 'object' ? Object.keys(response.outputs) : [],
+      hasData: !!response?.data,
+      dataKeys: response?.data && typeof response.data === 'object' ? Object.keys(response.data) : [],
+      hasText: !!response?.text,
+      outputsText: response?.outputs?.text ? response.outputs.text.substring(0, 200) : 'NOT FOUND',
+      responseText: response?.text ? response.text.substring(0, 200) : 'NOT FOUND',
+      dataOutputsText: response?.data?.outputs?.text ? response.data.outputs.text.substring(0, 200) : 'NOT FOUND',
+      fullResponse: JSON.stringify(response),
+    });
 
-    // Извлекаем результат из workflow ответа
-    const simplifiedQuery = response?.outputs?.text || response?.text || query;
+    // Извлекаем результат из workflow ответа (проверяем все возможные пути)
+    // ВАЖНО: runWorkflow возвращает response.data, поэтому структура: response.data.outputs.text
+    let simplifiedQuery = query; // fallback
+    
+    if (response?.data?.outputs?.text) {
+      simplifiedQuery = response.data.outputs.text;
+      logger.info('Using simplifiedQuery from response.data.outputs.text');
+    } else if (response?.outputs?.text) {
+      simplifiedQuery = response.outputs.text;
+      logger.info('Using simplifiedQuery from response.outputs.text');
+    } else if (response?.text) {
+      simplifiedQuery = response.text;
+      logger.info('Using simplifiedQuery from response.text');
+    } else if (response?.data?.text) {
+      simplifiedQuery = response.data.text;
+      logger.info('Using simplifiedQuery from response.data.text');
+    } else {
+      logger.warn('Query simplifier did not return simplified query, using original query as fallback', {
+        responseStructure: JSON.stringify(response).substring(0, 500),
+      });
+    }
 
     // Извлекаем usage через BillingService
     const BillingService = require('../../services/BillingService');
@@ -678,11 +736,12 @@ async function simplifyUserQuery(query, userId = 'system') {
 
 
 
-    logger.info('Query simplification completed', {
+    logger.error('Query simplification completed - FINAL RESULT', {
       originalLength: query.length,
       simplifiedLength: simplifiedQuery.length,
-      originalQuery: query.substring(0, 50),
-      simplifiedQuery: simplifiedQuery.substring(0, 50),
+      originalQuery: query,
+      simplifiedQuery: simplifiedQuery,
+      areEqual: query === simplifiedQuery,
       usage: {
         promptTokens: usage.prompt_tokens,
         completionTokens: usage.completion_tokens,

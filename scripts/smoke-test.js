@@ -1334,6 +1334,7 @@ async function main() {
     console.log(' 2. CMD_TRANSLATE - Перевод текста');
     console.log(' 3. CMD_KB_ADD_FILE (first) - Загрузка первого файла');
     console.log(' 4. CMD_KB_ADD_FILE (second) - Загрузка второго файла');
+    console.log(' 4.5. QUERY_SIMPLIFIER - Проверка работы упрощения запроса');
     console.log(' 5. CMD_GEN_RESPONSE - Генерация ответа с RAG');
     console.log(' 6. CMD_ARCHIVE_TICKET - Архивация тикета');
     console.log(' 7. CMD_KB_LIST_FILES - Список файлов');
@@ -1348,7 +1349,7 @@ async function main() {
   console.log(colorize('\n🚀 Starting E2E Smoke Test...', 'bright'));
   
   // TEST 0: Проверка healthcheck сервиса (нулевой тест)
-  console.log(colorize('\n--- [TEST 0/13: Healthcheck Service] ---', 'cyan'));
+  console.log(colorize('\n--- [TEST 0/14: Healthcheck Service] ---', 'cyan'));
   const isHealthcheckOk = await checkHealthcheck();
   if (!isHealthcheckOk) {
     console.error(colorize('\n❌ Healthcheck test failed. Aborting smoke test.', 'red'));
@@ -1450,7 +1451,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 1: CMD_ANALYZE_NEW_TICKET', 'yellow'));
     } else {
       const test1 = await runTest(
-        'TEST 1/13: Analyzing Ticket',
+        'TEST 1/14: Analyzing Ticket',
         'CMD_ANALYZE_NEW_TICKET',
         {
           text: 'У меня не работает вход в систему, ошибка 500',
@@ -1470,7 +1471,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 2: CMD_TRANSLATE', 'yellow'));
     } else {
       const test2 = await runTest(
-        'TEST 2/13: Translation',
+        'TEST 2/14: Translation',
         'CMD_TRANSLATE',
         {
           text: 'Welcome to the system',
@@ -1491,7 +1492,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 3: CMD_KB_ADD_FILE (first)', 'yellow'));
     } else {
       const test3 = await runTest(
-      'TEST 3/13: File Upload (Open WebUI README)',
+      'TEST 3/14: File Upload (Open WebUI README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
@@ -1540,7 +1541,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 4: CMD_KB_ADD_FILE (second)', 'yellow'));
     } else {
       const test4 = await runTest(
-      'TEST 4/13: File Upload (Alpaca WebUI README)',
+      'TEST 4/14: File Upload (Alpaca WebUI README)',
       'CMD_KB_ADD_FILE',
       {
         orgId: 'test-org-smoke',
@@ -1576,13 +1577,86 @@ async function main() {
       await waitForIndexing(entryQueue, 'test-org-smoke');
     }
 
+    // TEST 4.5: Query Simplifier - проверка работы упрощения запроса
+    if (!shouldRunTest(4.5, 'QUERY_SIMPLIFIER')) {
+      console.log(colorize('⏭️  Skipping TEST 4.5: QUERY_SIMPLIFIER', 'yellow'));
+    } else {
+      console.log(colorize('\n--- [TEST 4.5/13: Query Simplifier Test] ---', 'cyan'));
+      
+      const originalQuery = 'Hello! I am trying to decide between installing Alpaca WebUI and Open WebUI, and image generation is very important to me. I noticed that Open WebUI explicitly mentions support for local generation tools like ComfyUI and AUTOMATIC1111. Could you please clarify if Alpaca WebUI also supports these local image engines? Please tell me exactly which models or providers are currently supported for image generation in both Alpaca WebUI and Open WebUI, so I can compare them.';
+      
+      console.log(colorize('📝 Testing Query Simplifier...', 'yellow'));
+      console.log(`\nОригинальный запрос (${originalQuery.length} символов):`);
+      console.log(colorize(originalQuery, 'cyan'));
+      
+      try {
+        const startTime = Date.now();
+        const simplificationResult = await difyApi.simplifyUserQuery(originalQuery, 'test-org-smoke');
+        const duration = Date.now() - startTime;
+        
+        const simplifiedQuery = simplificationResult.query;
+        const usage = simplificationResult.usage;
+        
+        console.log(`\n✅ Simplifier выполнен за ${duration}ms`);
+        console.log(`\nУпрощенный запрос (${simplifiedQuery.length} символов):`);
+        console.log(colorize(simplifiedQuery, 'green'));
+        console.log(`\nИспользование токенов:`);
+        console.log(`  - Prompt tokens: ${usage.prompt_tokens}`);
+        console.log(`  - Completion tokens: ${usage.completion_tokens}`);
+        console.log(`  - Total tokens: ${usage.total_tokens}`);
+        
+        const isSimplified = simplifiedQuery.length < originalQuery.length;
+        const lengthDiff = originalQuery.length - simplifiedQuery.length;
+        
+        console.log(`\n📊 Результат упрощения:`);
+        console.log(`  - Оригинальная длина: ${originalQuery.length} символов`);
+        console.log(`  - Упрощенная длина: ${simplifiedQuery.length} символов`);
+        console.log(`  - Разница: ${lengthDiff} символов`);
+        console.log(`  - Упрощен: ${isSimplified ? colorize('ДА ✓', 'green') : colorize('НЕТ ✗', 'red')}`);
+        
+        if (!isSimplified) {
+          console.log(colorize('\n⚠️  ВНИМАНИЕ: Запрос не был упрощен! Simplifier вернул оригинальный запрос.', 'yellow'));
+          console.log(colorize('   Это может быть причиной того, что поиск не находит результаты.', 'yellow'));
+        }
+        
+        console.log(`\n${colorize('✅ TEST 4.5 PASSED', 'green')}`);
+        testResults.push({ name: 'QUERY_SIMPLIFIER', passed: true });
+      } catch (error) {
+        console.error(colorize(`\n❌ TEST 4.5 FAILED: ${error.message}`, 'red'));
+        if (error.stack) {
+          console.error(colorize(`   Stack: ${error.stack}`, 'red'));
+        }
+        testResults.push({ name: 'QUERY_SIMPLIFIER', passed: false });
+      }
+      
+      await sleep(2000);
+    }
+
     // TEST 5: CMD_GEN_RESPONSE - вопрос о сравнении WebUI проектов по генерации изображений
     // Теперь файлы загружены и проиндексированы, можно использовать их как базу знаний
     if (!shouldRunTest(5, 'CMD_GEN_RESPONSE')) {
       console.log(colorize('⏭️  Skipping TEST 5: CMD_GEN_RESPONSE', 'yellow'));
     } else {
+      // Синхронизируем кэш ПЕРЕД генерацией ответа, чтобы гарантировать актуальность данных
+      // Это особенно важно, если тесты 3 и 4 были пропущены или выполнялись в предыдущем запуске
+      console.log(colorize('⏳ Syncing cache before RAG query to ensure knowledge base is available...', 'yellow'));
+      const cacheSyncBeforeRAG = await runTest(
+        'CACHE SYNC: Syncing cache before TEST 5 (RAG)',
+        'CMD_SYS_RESYNC_CACHE',
+        {
+          meta: {},
+        },
+        validators.CMD_SYS_RESYNC_CACHE,
+        10000,
+        entryQueue
+      );
+      if (!cacheSyncBeforeRAG) {
+        console.log(colorize('⚠️  Cache sync failed before RAG, but continuing...', 'yellow'));
+      }
+      await sleep(1000);
+      
       const test5 = await runTest(
-      'TEST 5/13: Generating Response (RAG with uploaded files - WebUI comparison)',
+      'TEST 5/14: Generating Response (RAG with uploaded files - WebUI comparison)',
       'CMD_GEN_RESPONSE',
       {
         orgId: 'test-org-smoke',
@@ -1608,7 +1682,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 6: CMD_ARCHIVE_TICKET', 'yellow'));
     } else {
       const test6 = await runTest(
-      'TEST 6/13: Archiving Ticket',
+      'TEST 6/14: Archiving Ticket',
       'CMD_ARCHIVE_TICKET',
       {
         orgId: 'test-org-smoke',
@@ -1635,7 +1709,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 7: CMD_KB_LIST_FILES', 'yellow'));
     } else {
       const test7 = await runTest(
-      'TEST 7/13: List Files',
+      'TEST 7/14: List Files',
       'CMD_KB_LIST_FILES',
       {
         orgId: 'test-org-smoke',
@@ -1676,7 +1750,7 @@ async function main() {
       await sleep(1000);
       
       const test8 = await runTest(
-        'TEST 8/13: Delete File',
+        'TEST 8/14: Delete File',
         'CMD_KB_DELETE_FILE',
         {
           orgId: 'test-org-smoke',
@@ -1696,7 +1770,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 9: CMD_SYS_RESYNC_CACHE', 'yellow'));
     } else {
       const test9 = await runTest(
-      'TEST 9/13: Sync Cache',
+      'TEST 9/14: Sync Cache',
       'CMD_SYS_RESYNC_CACHE',
       {
         meta: {},
@@ -1715,7 +1789,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 10: CMD_UNKNOWN_COMMAND', 'yellow'));
     } else {
       const test10 = await runTest(
-      'TEST 10/13: Unknown Command (Error Handling)',
+      'TEST 10/14: Unknown Command (Error Handling)',
       'CMD_UNKNOWN_COMMAND',
       {
         orgId: 'test-org-smoke',
@@ -1736,7 +1810,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 10.5: CMD_РРРРРРР', 'yellow'));
     } else {
       const test10_5 = await runTest(
-      'TEST 10.5/13: Unknown Command with Cyrillic (CMD_РРРРРРР)',
+      'TEST 10.5/14: Unknown Command with Cyrillic (CMD_РРРРРРР)',
       'CMD_РРРРРРР',
       {
         orgId: 'test-org-smoke',
@@ -1757,7 +1831,7 @@ async function main() {
       console.log(colorize('⏭️  Skipping TEST 11: CMD_CLEANUP_ORG', 'yellow'));
     } else {
       const test11 = await runTest(
-      'TEST 11/13: Cleanup Org',
+      'TEST 11/14: Cleanup Org',
       'CMD_CLEANUP_ORG',
       {
         orgId: 'test-org-smoke',

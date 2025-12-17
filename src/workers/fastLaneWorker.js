@@ -306,6 +306,14 @@ async function handleGenResponse(job) {
   const processedQuery = simplificationResult.query;
   const simplificationUsage = simplificationResult.usage;
 
+  logger.error('=== QUERY SIMPLIFICATION RESULT ===');
+  logger.error('ORIGINAL QUERY (full):', query);
+  logger.error('ORIGINAL QUERY LENGTH:', query.length);
+  logger.error('SIMPLIFIED QUERY (full):', processedQuery);
+  logger.error('SIMPLIFIED QUERY LENGTH:', processedQuery.length);
+  logger.error('ARE EQUAL:', query === processedQuery);
+  logger.error('=====================================');
+  
   logger.info('CMD_GEN_RESPONSE: Query simplified and knowledge base IDs retrieved', {
     jobId: job.id,
     orgId,
@@ -351,22 +359,48 @@ async function handleGenResponse(job) {
           isArray: Array.isArray(results),
           resultsKeys: results && typeof results === 'object' ? Object.keys(results) : [],
           recordsCount: results?.records?.length || (Array.isArray(results) ? results.length : 0),
-          query: query.substring(0, 50),
+          originalQuery: query.substring(0, 50),
+          processedQuery: processedQuery.substring(0, 50),
+          processedQueryLength: processedQuery.length,
         });
         
         let records = [];
         if (Array.isArray(results)) {
           records = results;
+          logger.debug('CMD_GEN_RESPONSE: Results is array', { recordsCount: records.length });
         } else if (results && results.records && Array.isArray(results.records)) {
           records = results.records;
+          logger.debug('CMD_GEN_RESPONSE: Results has records array', { recordsCount: records.length });
         } else if (results && results.data && Array.isArray(results.data)) {
           records = results.data;
+          logger.debug('CMD_GEN_RESPONSE: Results has data array', { recordsCount: records.length });
+        } else {
+          logger.warn('CMD_GEN_RESPONSE: Unexpected results structure', {
+            resultsType: typeof results,
+            resultsKeys: results && typeof results === 'object' ? Object.keys(results) : [],
+            resultsValue: results ? JSON.stringify(results).substring(0, 500) : 'null',
+          });
         }
         
         if (records && records.length > 0) {
-          retrievedRecords = records.map(record => {
+          // Логируем структуру первой записи для отладки
+          logger.info('CMD_GEN_RESPONSE: First record structure before mapping', {
+            jobId: job.id,
+            orgId,
+            recordKeys: Object.keys(records[0]),
+            recordType: typeof records[0],
+            hasSegment: !!records[0].segment,
+            hasContent: !!records[0].content,
+            segmentKeys: records[0].segment ? Object.keys(records[0].segment) : [],
+            segmentContent: records[0].segment?.content?.substring(0, 100) || 'NO SEGMENT CONTENT',
+            directContent: records[0].content?.substring(0, 100) || 'NO DIRECT CONTENT',
+            fullRecord: JSON.stringify(records[0]).substring(0, 500),
+          });
+          
+          retrievedRecords = records.map((record, index) => {
+            const content = record.segment?.content || record.content || '';
             const recordData = {
-              content: record.segment?.content || record.content || '',
+              content: content,
               score: record.score || 0,
               source: 'admin_kb',
             };
@@ -381,8 +415,27 @@ async function handleGenResponse(job) {
               recordData.documentName = documentName;
             }
             
+            // Логируем, если content пустой
+            if (!content || content.trim().length === 0) {
+              logger.warn('CMD_GEN_RESPONSE: Record has empty content', {
+                jobId: job.id,
+                orgId,
+                recordIndex: index,
+                recordKeys: Object.keys(record),
+                hasSegment: !!record.segment,
+                segmentKeys: record.segment ? Object.keys(record.segment) : [],
+              });
+            }
+            
             return recordData;
           }).filter(item => item.content.trim().length > 0);
+          
+          logger.info('CMD_GEN_RESPONSE: After filtering retrievedRecords', {
+            jobId: job.id,
+            orgId,
+            originalRecordsCount: records.length,
+            filteredRecordsCount: retrievedRecords.length,
+          });
           
           if (records.length > 0) {
             logger.debug('CMD_GEN_RESPONSE: First record structure', {
@@ -413,11 +466,15 @@ async function handleGenResponse(job) {
             })),
           });
         } else {
-          logger.info('CMD_GEN_RESPONSE: No relevant chunks found via Hybrid Search', {
+          logger.warn('CMD_GEN_RESPONSE: No relevant chunks found via Hybrid Search', {
             jobId: job.id,
             orgId,
             adminKbId,
             recordsLength: records?.length || 0,
+            resultsType: typeof results,
+            resultsValue: results ? JSON.stringify(results).substring(0, 500) : 'null',
+            processedQuery: processedQuery.substring(0, 100),
+            originalQuery: query.substring(0, 100),
           });
         }
       } catch (error) {

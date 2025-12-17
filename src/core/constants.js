@@ -52,7 +52,7 @@ module.exports = {
     },
     // weights убран - API требует объект или не принимает при создании датасета
     top_k: 5,
-    score_threshold_enabled: true,
+    score_threshold_enabled: false, // ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ОТЛАДКИ
     score_threshold: 0.5,
   },
 };
