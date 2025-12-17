@@ -72,9 +72,6 @@ mkdir -p volumes/{db,redis,weaviate,app/certbot/{conf,www},certbot/{conf,www}}
 ### 4. Проверка конфигурации
 
 ```bash
-# Проверьте .gitignore
-grep -q "^volumes/$" .gitignore && echo "✅ .gitignore настроен правильно" || echo "❌ .gitignore не настроен"
-
 # Проверьте .env
 [ -f ".env" ] && echo "✅ .env файл существует" || echo "❌ .env файл отсутствует"
 ```
@@ -123,12 +120,6 @@ curl -I http://165.227.159.10/signin
 - **APP_API_URL**: Должен указывать на внешний IP сервера, а не localhost
 - **SECRET_KEY**: Сгенерируйте новый для продакшена
 - **FORCE_TENANT_ISOLATION**: Должен быть `false` для Docker развертывания
-
-### Безопасность
-
-- Измените все пароли по умолчанию
-- Используйте HTTPS в продакшене
-- Ограничьте доступ к API
 
 ### Мониторинг
 
