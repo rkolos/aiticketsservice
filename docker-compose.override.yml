@@ -1,0 +1,35 @@
+services:
+  smoke-runner:
+    image: node:20-alpine
+    working_dir: /app
+    command: ["sleep", "infinity"]
+    environment:
+      DIFY_API_URL: ${DIFY_API_URL:-http://api:5001/v1}
+      DIFY_KEY_ADMIN: ${DIFY_KEY_ADMIN:-}
+      DIFY_KEY_CLASSIFIER: ${DIFY_KEY_CLASSIFIER:-}
+      DIFY_KEY_SUMMARIZER: ${DIFY_KEY_SUMMARIZER:-}
+      DIFY_KEY_RESPONSE_WORKFLOW: ${DIFY_KEY_RESPONSE_WORKFLOW:-}
+      DIFY_APP_KEY_TRANSLATOR: ${DIFY_APP_KEY_TRANSLATOR:-}
+      DIFY_APP_KEY_QUERY_SIMPLIFIER: ${DIFY_APP_KEY_QUERY_SIMPLIFIER:-}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-difyai123456}
+      HEALTHCHECK_HOST: ${HEALTHCHECK_HOST:-ticket-ai-worker}
+      HEALTHCHECK_PORT: ${HEALTHCHECK_PORT:-4000}
+      HEALTHCHECK_URL: ${HEALTHCHECK_URL:-}
+    volumes:
+      - ./:/app:ro
+      - smoke_node_modules:/app/node_modules
+      - smoke_tmp:/tmp
+    networks:
+      - default
+    depends_on:
+      - redis
+      - api
+      - ticket-ai-worker
+      - web
+
+volumes:
+  smoke_node_modules:
+  smoke_tmp:
+

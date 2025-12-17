@@ -383,8 +383,8 @@ async function debugRAGTest() {
 
 require('dotenv').config({ override: true });
 
-// Для локального запуска скрипта используем localhost, если не указано иное
-if (!process.env.REDIS_HOST || process.env.REDIS_HOST === 'redis') {
+// Для локального запуска оставляем localhost только если переменная не задана
+if (!process.env.REDIS_HOST) {
   process.env.REDIS_HOST = 'localhost';
 }
 
@@ -394,6 +394,13 @@ const crypto = require('crypto');
 const http = require('http');
 const { QUEUES } = require('../src/core/constants');
 const config = require('../src/config');
+// Явно подхватываем Redis-хост/порт/пароль из env (для docker-run smk)
+config.redis = {
+  ...config.redis,
+  host: process.env.REDIS_HOST || config.redis.host,
+  port: process.env.REDIS_PORT ? Number(process.env.REDIS_PORT) : config.redis.port,
+  password: process.env.REDIS_PASSWORD || config.redis.password,
+};
 const difyApi = require('../src/infrastructure/dify/api');
 
 // Функция для генерации UUID
@@ -1090,7 +1097,8 @@ async function waitForIndexing(entryQueueInstance, orgId, timeoutMs = 30000) {
 async function checkHealthcheck() {
   try {
     const port = config.healthcheck.port;
-    const url = `http://localhost:${port}/health`;
+    const host = process.env.HEALTHCHECK_HOST || 'localhost';
+    const url = `http://${host}:${port}/health`;
 
     console.log(colorize(`Checking Healthcheck API at ${url}...`, 'yellow'));
 
